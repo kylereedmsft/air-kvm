@@ -14,6 +14,11 @@ Implement Milestone A from `docs/plan.md`: ESP32 advertises BLE HID (HOGP) and c
 ## Notes
 - Keep existing custom BLE UART service available while introducing HID, per current transition plan.
 - Verification run (March 7, 2026): `pio test -e native` passed (8/8), `pio run -e esp32dev` succeeded.
+- MCP progress (March 7, 2026):
+  - Replaced UART transport shell dependency with cross-platform `serialport`.
+  - Added MCP tools: `airkvm_dom_snapshot`, `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
+  - Implemented request_id-based DOM/screenshot response collection and screenshot chunk reassembly.
+  - Added transport, tooling, and server-level tests (`mcp` now at 21 passing tests).
 
 ## Live macOS validation checklist
 1. Flash latest firmware:
