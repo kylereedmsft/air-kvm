@@ -1,5 +1,4 @@
-import fs from 'node:fs';
-import readline from 'node:readline';
+import { SerialPort } from 'serialport';
 
 export function parseDeviceLine(line) {
   let parsed;
@@ -32,9 +31,8 @@ export class UartTransport {
     this.baudRate = baudRate;
     this.commandTimeoutMs = commandTimeoutMs;
     this.debug = debug;
-    this.readStream = null;
-    this.writeStream = null;
-    this.rl = null;
+    this.serialPort = null;
+    this.readBuffer = '';
     this.currentWaiter = null;
     this.sendQueue = Promise.resolve();
     this.opened = false;
@@ -45,10 +43,23 @@ export class UartTransport {
     if (!this.portPath) throw new Error('serial_port_not_configured');
 
     this.log(`open port=${this.portPath} baud=${this.baudRate}`);
-    this.readStream = fs.createReadStream(this.portPath, { encoding: 'utf8' });
-    this.writeStream = fs.createWriteStream(this.portPath, { encoding: 'utf8', flags: 'a' });
-    this.rl = readline.createInterface({ input: this.readStream, crlfDelay: Infinity });
-    this.rl.on('line', (line) => this.onLine(line));
+    this.serialPort = new SerialPort({
+      path: this.portPath,
+      baudRate: this.baudRate,
+      autoOpen: false
+    });
+
+    await new Promise((resolve, reject) => {
+      this.serialPort.open((err) => {
+        if (err) reject(err);
+        else resolve();
+      });
+    });
+
+    this.serialPort.on('data', (chunk) => this.onData(chunk));
+    this.serialPort.on('error', (error) => {
+      this.log(`serial error: ${error?.message || error}`);
+    });
     this.opened = true;
   }
 
@@ -75,6 +86,21 @@ export class UartTransport {
     }
   }
 
+  onData(chunk) {
+    this.readBuffer += chunk.toString('utf8');
+    while (true) {
+      const newline = this.readBuffer.indexOf('\n');
+      if (newline === -1) {
+        break;
+      }
+      const line = this.readBuffer.slice(0, newline).replace(/\r$/, '');
+      this.readBuffer = this.readBuffer.slice(newline + 1);
+      if (line.length > 0) {
+        this.onLine(line);
+      }
+    }
+  }
+
   async sendCommand(command) {
     const run = async () => {
       await this.open();
@@ -82,9 +108,9 @@ export class UartTransport {
       const line = `${JSON.stringify(command)}\n`;
       this.log(`tx line=${line.trim()}`);
       await new Promise((resolve, reject) => {
-        this.writeStream.write(line, (err) => {
+        this.serialPort.write(line, (err) => {
           if (err) reject(err);
-          else resolve();
+          else this.serialPort.drain((drainErr) => (drainErr ? reject(drainErr) : resolve()));
         });
       });
 
@@ -124,9 +150,11 @@ export class UartTransport {
       this.currentWaiter.reject(new Error('transport_closed'));
       this.currentWaiter = null;
     }
-    this.rl?.close();
-    this.readStream?.destroy();
-    this.writeStream?.end();
+    if (this.serialPort?.isOpen) {
+      this.serialPort.close(() => {});
+    }
+    this.serialPort = null;
+    this.readBuffer = '';
     this.opened = false;
   }
 }
