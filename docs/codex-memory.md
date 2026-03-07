@@ -21,6 +21,12 @@
 - Added docs planning/status:
   - `docs/plan.md`
   - AGENTS current-reality notes
+- Confirmed Web Bluetooth permission model for MV3 extension:
+  - Do **not** add `"bluetooth"` under `permissions` or `optional_permissions` (unknown permission error).
+  - Web Bluetooth in extensions uses runtime user prompt flow via `navigator.bluetooth.requestDevice(...)`.
+- Extension action click feedback:
+  - Added badge status on click so failures are visible (`...`, `BLE`, `NO`, `ERR`).
+  - Previous behavior silently swallowed failures and appeared as “nothing happens”.
 
 ## In-Progress / Not Complete
 - BLE HID (HOGP) is not implemented (main blocker).

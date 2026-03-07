@@ -1,6 +1,19 @@
 import { connectBle, postEvent, setBleCommandHandler } from './bridge.js';
 import { dataUrlToMetaAndChunks, resolveScreenshotConfig } from './screenshot_protocol.js';
 
+function setBadge(text, color) {
+  if (!chrome?.action?.setBadgeText || !chrome?.action?.setBadgeBackgroundColor) return;
+  chrome.action.setBadgeText({ text });
+  chrome.action.setBadgeBackgroundColor({ color });
+}
+
+function clearBadgeLater(ms = 5000) {
+  setTimeout(() => {
+    if (!chrome?.action?.setBadgeText) return;
+    chrome.action.setBadgeText({ text: '' });
+  }, ms);
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
 
@@ -182,12 +195,24 @@ setBleCommandHandler((command) => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab.id) return;
+  setBadge('...', '#5B6CFF');
   try {
-    await connectBle();
+    const connected = await connectBle();
+    if (!connected) {
+      setBadge('NO', '#9E9E9E');
+      clearBadgeLater();
+      return;
+    }
+    setBadge('BLE', '#1E8E3E');
+    if (!tab.id) {
+      clearBadgeLater();
+      return;
+    }
     const summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
     await postEvent({ ...summary, tabId: tab.id });
+    clearBadgeLater();
   } catch {
-    // No content script or unavailable tab context.
+    setBadge('ERR', '#D93025');
+    clearBadgeLater();
   }
 });
