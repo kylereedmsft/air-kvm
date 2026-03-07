@@ -1,5 +1,18 @@
 # Manager Plan
 
+## Agent Workflow
+- `MANAGER`: creates/updates plan, assigns one step at a time, verifies completion.
+- `WORKER`: executes exactly one approved step and reports concrete diffs/commands.
+- `REVIEWER` (new, mandatory before every commit): performs an adversarial review focused on bugs, regressions, unsafe assumptions, missing tests, and cross-platform risks.
+
+### REVIEWER Gate (must pass before commit)
+1. Validate behavior changes against current requirements and architecture docs.
+2. Hunt for failure modes (timeouts, malformed payloads, race conditions, stale state, edge cases).
+3. Check platform compatibility impacts (macOS/Windows/Edge/Node paths).
+4. Verify tests exist for new behavior; if missing, block commit until added or risk explicitly documented.
+5. Produce findings with severity (`critical/high/medium/low`) and required fixes.
+6. `MANAGER` approves commit only after all `critical/high` findings are fixed or explicitly waived.
+
 ## Objective
 Implement Milestone A from `docs/plan.md`: ESP32 advertises BLE HID (HOGP) and command path can inject keyboard/mouse input.
 
