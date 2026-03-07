@@ -17,6 +17,8 @@ Milestone (March 7, 2026):
 - DOM snapshot E2E is now working via MCP tool `airkvm_dom_snapshot`.
 - Verified returned snapshot for `https://www.google.com/` with title `Google`.
 - Next live validation target: screenshot tools (`airkvm_screenshot_tab`, `airkvm_screenshot_desktop`).
+- Pre-check before MCP DOM/screenshot calls: bridge tab must be connected (status shows `Connected`).
+- If not connected, firmware still ACKs request but MCP times out waiting for `dom.snapshot` / `screenshot.*` frames.
 
 
   You will operate in two roles:

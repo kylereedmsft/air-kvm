@@ -90,6 +90,10 @@
   - MCP tool `airkvm_dom_snapshot` returned successful structured payload.
   - Verified title/url in returned snapshot (`Google`, `https://www.google.com/`).
   - Confirms BLE request -> extension capture -> UART relay -> MCP collector roundtrip is functioning.
+- Operational caveat discovered:
+  - When the bridge is not actively connected/subscribed, firmware still echoes `dom.snapshot.request` / `screenshot.request` and emits `{ "ok": true }` on UART, but no `rx.ble` response frames follow.
+  - MCP then returns `transport_error` with `device_timeout`.
+  - Practical pre-check before MCP tool calls: bridge page must show `Connected` after successful handshake.
 
 ## In-Progress / Not Complete
 - BLE HID (HOGP) is not implemented (main blocker).
