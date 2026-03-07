@@ -100,3 +100,24 @@ test('screenshot collector supports compact screenshot frame keys', () => {
   assert.equal(done.data.total_chunks, 2);
   assert.equal(done.data.base64, 'ABCDEF');
 });
+
+test('screenshot collector rejects oversized response from meta total', () => {
+  const command = { type: 'screenshot.request', source: 'tab', request_id: 'shot-big-meta', max_chars: 10 };
+  const collect = createResponseCollector('airkvm_screenshot_tab', command);
+
+  const done = collect({ type: 'screenshot.meta', rid: 'shot-big-meta', src: 'tab', tc: 1, tch: 11 });
+  assert.equal(done.done, true);
+  assert.equal(done.ok, false);
+  assert.equal(done.data.error, 'screenshot_response_too_large');
+});
+
+test('screenshot collector rejects oversized chunk payload', () => {
+  const command = { type: 'screenshot.request', source: 'tab', request_id: 'shot-big-chunk', max_chars: 10 };
+  const collect = createResponseCollector('airkvm_screenshot_tab', command);
+
+  collect({ type: 'screenshot.meta', rid: 'shot-big-chunk', src: 'tab', tc: 1, tch: 10 });
+  const done = collect({ type: 'screenshot.chunk', rid: 'shot-big-chunk', src: 'tab', q: 0, d: 'A'.repeat(11) });
+  assert.equal(done.done, true);
+  assert.equal(done.ok, false);
+  assert.equal(done.data.error, 'screenshot_chunk_too_large');
+});

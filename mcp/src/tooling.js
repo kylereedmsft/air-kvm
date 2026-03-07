@@ -135,8 +135,10 @@ export function createResponseCollector(name, command) {
 
   if (name === 'airkvm_screenshot_tab' || name === 'airkvm_screenshot_desktop') {
     const requestId = command.request_id;
+    const maxChars = Number.isInteger(command.max_chars) ? command.max_chars : 200000;
     const chunksBySeq = new Map();
     let meta = null;
+    let receivedChars = 0;
 
     return (msg) => {
       const msgRequestId = msg.request_id ?? msg.rid;
@@ -170,13 +172,53 @@ export function createResponseCollector(name, command) {
         const seq = msg.seq ?? msg.q;
         const data = msg.data ?? msg.d;
         if (Number.isInteger(seq) && typeof data === 'string') {
+          if (data.length > maxChars) {
+            return {
+              done: true,
+              ok: false,
+              data: {
+                request_id: requestId,
+                source: msgSource || command.source,
+                error: 'screenshot_chunk_too_large',
+                detail: { seq, length: data.length, max_chars: maxChars }
+              }
+            };
+          }
+          if (!chunksBySeq.has(seq)) {
+            receivedChars += data.length;
+          }
+          if (receivedChars > maxChars) {
+            return {
+              done: true,
+              ok: false,
+              data: {
+                request_id: requestId,
+                source: msgSource || command.source,
+                error: 'screenshot_response_too_large',
+                detail: { received_chars: receivedChars, max_chars: maxChars }
+              }
+            };
+          }
           chunksBySeq.set(seq, data);
         }
       }
 
       const totalChunks = meta ? (meta.total_chunks ?? meta.tc) : null;
+      const totalChars = meta ? (meta.total_chars ?? meta.tch) : null;
       if (!meta || !Number.isInteger(totalChunks) || totalChunks < 0) {
         return null;
+      }
+      if (Number.isInteger(totalChars) && totalChars > maxChars) {
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            source: msgSource || command.source,
+            error: 'screenshot_response_too_large',
+            detail: { total_chars: totalChars, max_chars: maxChars }
+          }
+        };
       }
       if (chunksBySeq.size < totalChunks) {
         return null;
