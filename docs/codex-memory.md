@@ -63,6 +63,12 @@
   - Firmware BLE advertised name changed to `air-kvm-ctrl-cb01`.
   - Extension chooser filter now requires exact `name: "air-kvm-ctrl-cb01"` with UART service UUID.
   - Goal is to avoid connecting to similarly named non-control peripherals.
+- Critical BLE TX bug found/fixed:
+  - `NimBLECharacteristic::setValue(payload)` with `const char*` was sending pointer bytes (4-byte binary values) instead of JSON text.
+  - This exactly matched observed notification payloads like `19 07 40 3f` / `70 04 40 3f`.
+  - Fixed by using explicit byte+length overload:
+    - `setValue(reinterpret_cast<const uint8_t*>(payload), strlen(payload))`
+  - Applied in `transport_mux.cpp` and boot payload initialization in `app.cpp`.
 - Bridge diagnostics now include deeper BLE stream introspection:
   - Logs connected device info immediately after GATT connect (before handshake success/failure).
   - Logs raw notification hex bytes (`rx notify`) from TX characteristic.

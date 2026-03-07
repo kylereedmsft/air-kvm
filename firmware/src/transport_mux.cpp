@@ -1,5 +1,7 @@
 #include "transport_mux.hpp"
 
+#include <cstring>
+
 #include <NimBLEDevice.h>
 
 namespace {
@@ -26,7 +28,7 @@ void TransportMux::EmitControl(const char* payload) {
   Serial.print(payload);
   Serial.println(kCtrlSuffix);
   if (tx_char_ != nullptr) {
-    tx_char_->setValue(payload);
+    tx_char_->setValue(reinterpret_cast<const uint8_t*>(payload), std::strlen(payload));
     tx_char_->notify();
   }
 }

@@ -1,5 +1,7 @@
 #include "app.hpp"
 
+#include <cstring>
+
 namespace {
 constexpr const char* kDeviceName = "air-kvm-ctrl-cb01";
 constexpr const char* kServiceUuid = "6E400101-B5A3-F393-E0A9-E50E24DCCB01";
@@ -46,7 +48,7 @@ void AirKvmApp::Setup() {
   rx_char->setCallbacks(&rx_callbacks_);
   NimBLECharacteristic* tx_char = service->createCharacteristic(
       kTxCharUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  tx_char->setValue(kBootMsg);
+  tx_char->setValue(reinterpret_cast<const uint8_t*>(kBootMsg), std::strlen(kBootMsg));
   transport_.SetBleTxCharacteristic(tx_char);
 
   service->start();
