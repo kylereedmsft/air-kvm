@@ -10,6 +10,10 @@ function makeToolResultText(text) {
   return { content: [{ type: 'text', text }] };
 }
 
+function makeToolResultJson(payload) {
+  return makeToolResultText(JSON.stringify(payload));
+}
+
 function makeRequestId() {
   return `req_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
 }
@@ -148,7 +152,115 @@ function onToolCall(id, params) {
   }
 
   const line = toDeviceLine(command).trim();
-  transport.sendCommand(command).then((result) => {
+  let responseCollector = null;
+  if (name === 'airkvm_dom_snapshot') {
+    const requestId = command.request_id;
+    responseCollector = (msg) => {
+      if (typeof msg.ok === 'boolean' && msg.ok === false) {
+        return {
+          done: true,
+          ok: false,
+          data: { request_id: requestId, error: msg.error || 'device_rejected', device: msg }
+        };
+      }
+      if (msg.type === 'dom.snapshot' && msg.request_id === requestId) {
+        return {
+          done: true,
+          ok: true,
+          data: { request_id: requestId, snapshot: msg }
+        };
+      }
+      if (msg.type === 'dom.snapshot.error' && msg.request_id === requestId) {
+        return {
+          done: true,
+          ok: false,
+          data: { request_id: requestId, error: msg.error || 'dom_snapshot_error', detail: msg }
+        };
+      }
+      return null;
+    };
+  }
+  if (name === 'airkvm_screenshot_tab' || name === 'airkvm_screenshot_desktop') {
+    const requestId = command.request_id;
+    const chunksBySeq = new Map();
+    let meta = null;
+    responseCollector = (msg) => {
+      if (typeof msg.ok === 'boolean' && msg.ok === false) {
+        return {
+          done: true,
+          ok: false,
+          data: { request_id: requestId, error: msg.error || 'device_rejected', device: msg }
+        };
+      }
+      if (msg.request_id !== requestId) {
+        return null;
+      }
+      if (msg.type === 'screenshot.error') {
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            source: msg.source || command.source,
+            error: msg.error || 'screenshot_error',
+            detail: msg
+          }
+        };
+      }
+      if (msg.type === 'screenshot.meta') {
+        meta = msg;
+      } else if (msg.type === 'screenshot.chunk' && Number.isInteger(msg.seq) && typeof msg.data === 'string') {
+        chunksBySeq.set(msg.seq, msg.data);
+      }
+
+      if (!meta || !Number.isInteger(meta.total_chunks) || meta.total_chunks < 0) {
+        return null;
+      }
+      if (chunksBySeq.size < meta.total_chunks) {
+        return null;
+      }
+
+      const ordered = [];
+      for (let seq = 0; seq < meta.total_chunks; seq += 1) {
+        if (!chunksBySeq.has(seq)) {
+          return null;
+        }
+        ordered.push(chunksBySeq.get(seq));
+      }
+      const base64 = ordered.join('');
+      return {
+        done: true,
+        ok: true,
+        data: {
+          request_id: requestId,
+          source: meta.source || command.source,
+          mime: meta.mime || 'application/octet-stream',
+          total_chunks: meta.total_chunks,
+          total_chars: typeof meta.total_chars === 'number' ? meta.total_chars : base64.length,
+          base64
+        }
+      };
+    };
+  }
+
+  transport.sendCommand(command, responseCollector).then((result) => {
+    if (name === 'airkvm_dom_snapshot' || name === 'airkvm_screenshot_tab' || name === 'airkvm_screenshot_desktop') {
+      if (result.ok === false) {
+        send({
+          jsonrpc: '2.0',
+          id,
+          result: makeToolResultJson(result.data || { error: 'request_failed' }),
+          isError: true
+        });
+        return;
+      }
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: makeToolResultJson(result.data || { ok: true })
+      });
+      return;
+    }
     const isStateResponse = result?.msg?.type === 'state' && typeof result?.msg?.busy === 'boolean';
     const isExplicitRejection = result?.msg && result.ok === false;
     if (isExplicitRejection) {

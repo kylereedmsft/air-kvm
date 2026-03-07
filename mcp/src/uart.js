@@ -101,7 +101,7 @@ export class UartTransport {
     }
   }
 
-  async sendCommand(command) {
+  async sendCommand(command, responseCollector = null) {
     const run = async () => {
       await this.open();
 
@@ -131,7 +131,19 @@ export class UartTransport {
           onFrame: (frame) => {
             frames.push(frame);
             const msg = frame.kind === 'ctrl' || frame.kind === 'legacy_ctrl' ? frame.msg : null;
-            if (this.shouldResolveForCommand(command, msg)) {
+            if (responseCollector && msg) {
+              const collected = responseCollector(msg, frame, frames);
+              if (collected?.done) {
+                finish(resolve, {
+                  ok: typeof collected.ok === 'boolean' ? collected.ok : true,
+                  msg: collected.msg ?? msg,
+                  frames,
+                  data: collected.data
+                });
+                return;
+              }
+            }
+            if (!responseCollector && this.shouldResolveForCommand(command, msg)) {
               this.log(`resolved command=${JSON.stringify(command)} msg=${JSON.stringify(msg)}`);
               finish(resolve, { ok: msg.ok, msg, frames });
             }

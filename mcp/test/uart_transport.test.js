@@ -60,3 +60,27 @@ test('sendCommand times out when device does not respond', async () => {
   transport.close();
 });
 
+test('sendCommand with collector ignores generic ack and resolves on matching payload', async () => {
+  const transport = makeTestTransport(200);
+  const requestId = 'req-test-1';
+  const pending = transport.sendCommand(
+    { type: 'dom.snapshot.request', request_id: requestId },
+    (msg) => {
+      if (msg.type === 'dom.snapshot' && msg.request_id === requestId) {
+        return { done: true, ok: true, data: { request_id: requestId, snapshot: msg } };
+      }
+      return null;
+    }
+  );
+
+  setTimeout(() => {
+    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"ok":true}}\n', 'utf8'));
+    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"type":"dom.snapshot","request_id":"req-test-1","summary":{"title":"x"}}}\n', 'utf8'));
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.data.request_id, requestId);
+  assert.equal(result.data.snapshot.type, 'dom.snapshot');
+  transport.close();
+});
