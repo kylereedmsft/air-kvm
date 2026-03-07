@@ -10,6 +10,28 @@ const kScreenshotConfig = {
   minJpegQuality: 0.45
 };
 
+function clampInt(value, min, max, fallback) {
+  if (!Number.isInteger(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function clampNumber(value, min, max, fallback) {
+  if (typeof value !== 'number' || Number.isNaN(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function resolveScreenshotConfig(command) {
+  return {
+    maxWidth: clampInt(command?.max_width, 160, 1920, kScreenshotConfig.maxWidth),
+    maxHeight: clampInt(command?.max_height, 120, 1080, kScreenshotConfig.maxHeight),
+    jpegQuality: clampNumber(command?.quality, 0.3, 0.9, kScreenshotConfig.jpegQuality),
+    maxBase64Chars: clampInt(command?.max_chars, 20000, 200000, kScreenshotConfig.maxBase64Chars),
+    maxAttempts: kScreenshotConfig.maxAttempts,
+    downscaleFactor: kScreenshotConfig.downscaleFactor,
+    minJpegQuality: kScreenshotConfig.minJpegQuality
+  };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
 
@@ -23,12 +45,12 @@ function makeRequestId() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-async function captureTabPng() {
+async function captureTabPng(config) {
   const dataUrl = await chrome.tabs.captureVisibleTab(undefined, { format: 'png' });
-  return compressDataUrlToJpeg(dataUrl);
+  return compressDataUrlToJpeg(dataUrl, config);
 }
 
-async function captureDesktopPng() {
+async function captureDesktopPng(config) {
   if (!chrome.desktopCapture?.chooseDesktopMedia) {
     throw new Error('desktop_capture_unavailable');
   }
@@ -58,7 +80,7 @@ async function captureDesktopPng() {
     if (!track) throw new Error('desktop_capture_no_track');
     const imageCapture = new ImageCapture(track);
     const bitmap = await imageCapture.grabFrame();
-    return encodeBitmapToJpegDataUrl(bitmap);
+    return encodeBitmapToJpegDataUrl(bitmap, config);
   } finally {
     stream.getTracks().forEach((t) => t.stop());
   }
@@ -85,13 +107,15 @@ async function blobToDataUrl(blob) {
   return `data:${blob.type || 'application/octet-stream'};base64,${btoa(binary)}`;
 }
 
-async function encodeBitmapToJpegDataUrl(bitmap) {
-  let size = fitWithin(bitmap.width, bitmap.height, kScreenshotConfig.maxWidth, kScreenshotConfig.maxHeight);
-  let quality = kScreenshotConfig.jpegQuality;
+async function encodeBitmapToJpegDataUrl(bitmap, config) {
+  let size = fitWithin(bitmap.width, bitmap.height, config.maxWidth, config.maxHeight);
+  let quality = config.jpegQuality;
   let bestBlob = null;
   let bestEstimatedBase64Chars = Number.POSITIVE_INFINITY;
+  let attempts = 0;
 
-  for (let attempt = 0; attempt < kScreenshotConfig.maxAttempts; attempt += 1) {
+  for (let attempt = 0; attempt < config.maxAttempts; attempt += 1) {
+    attempts = attempt + 1;
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('canvas_2d_unavailable');
@@ -101,33 +125,41 @@ async function encodeBitmapToJpegDataUrl(bitmap) {
 
     const estimatedBase64Chars = Math.ceil((blob.size * 4) / 3);
     bestEstimatedBase64Chars = estimatedBase64Chars;
-    if (estimatedBase64Chars <= kScreenshotConfig.maxBase64Chars) {
+    if (estimatedBase64Chars <= config.maxBase64Chars) {
       break;
     }
 
-    const nextWidth = Math.max(1, Math.round(size.width * kScreenshotConfig.downscaleFactor));
-    const nextHeight = Math.max(1, Math.round(size.height * kScreenshotConfig.downscaleFactor));
+    const nextWidth = Math.max(1, Math.round(size.width * config.downscaleFactor));
+    const nextHeight = Math.max(1, Math.round(size.height * config.downscaleFactor));
     size = { width: nextWidth, height: nextHeight };
-    quality = Math.max(kScreenshotConfig.minJpegQuality, quality - 0.1);
+    quality = Math.max(config.minJpegQuality, quality - 0.1);
   }
 
   if (!bestBlob) {
     throw new Error('screenshot_encode_failed');
   }
-  if (bestEstimatedBase64Chars > kScreenshotConfig.maxBase64Chars) {
+  if (bestEstimatedBase64Chars > config.maxBase64Chars) {
     throw new Error('screenshot_too_large');
   }
-  return blobToDataUrl(bestBlob);
+  const dataUrl = await blobToDataUrl(bestBlob);
+  return {
+    dataUrl,
+    encodedWidth: size.width,
+    encodedHeight: size.height,
+    encodedQuality: quality,
+    estimatedBase64Chars: bestEstimatedBase64Chars,
+    attempts
+  };
 }
 
-async function compressDataUrlToJpeg(dataUrl) {
+async function compressDataUrlToJpeg(dataUrl, config) {
   const response = await fetch(dataUrl);
   const blob = await response.blob();
   const bitmap = await createImageBitmap(blob);
-  return encodeBitmapToJpegDataUrl(bitmap);
+  return encodeBitmapToJpegDataUrl(bitmap, config);
 }
 
-function dataUrlToMetaAndChunks(dataUrl, requestId, source) {
+function dataUrlToMetaAndChunks(dataUrl, requestId, source, encodeStats = null) {
   const comma = dataUrl.indexOf(',');
   if (comma === -1) throw new Error('screenshot_invalid_data_url');
   const header = dataUrl.slice(0, comma);
@@ -144,6 +176,10 @@ function dataUrlToMetaAndChunks(dataUrl, requestId, source) {
     chunk_size: chunkSize,
     total_chunks: totalChunks,
     total_chars: base64.length,
+    encoded_width: encodeStats?.encodedWidth || null,
+    encoded_height: encodeStats?.encodedHeight || null,
+    encoded_quality: encodeStats?.encodedQuality || null,
+    encode_attempts: encodeStats?.attempts || null,
     ts: Date.now()
   };
   const chunks = [];
@@ -177,8 +213,9 @@ async function sendDomSnapshot(command) {
 async function sendScreenshot(command) {
   const source = command.source === 'desktop' ? 'desktop' : 'tab';
   const requestId = command.request_id || makeRequestId();
-  const dataUrl = source === 'desktop' ? await captureDesktopPng() : await captureTabPng();
-  const { meta, chunks } = dataUrlToMetaAndChunks(dataUrl, requestId, source);
+  const config = resolveScreenshotConfig(command);
+  const encoded = source === 'desktop' ? await captureDesktopPng(config) : await captureTabPng(config);
+  const { meta, chunks } = dataUrlToMetaAndChunks(encoded.dataUrl, requestId, source, encoded);
   await postEvent(meta);
   for (const chunk of chunks) {
     // BLE payloads are chunked to reduce risk of exceeding negotiated MTU.

@@ -29,9 +29,22 @@ export function validateAgentCommand(msg) {
         ? { ok: true }
         : { ok: false, error: 'invalid_dom_snapshot_request' };
     case 'screenshot.request':
-      return (msg.source === 'tab' || msg.source === 'desktop') && typeof msg.request_id === 'string'
-        ? { ok: true }
-        : { ok: false, error: 'invalid_screenshot_request' };
+      if (!((msg.source === 'tab' || msg.source === 'desktop') && typeof msg.request_id === 'string')) {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
+      if (typeof msg.max_width !== 'undefined' && !Number.isInteger(msg.max_width)) {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
+      if (typeof msg.max_height !== 'undefined' && !Number.isInteger(msg.max_height)) {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
+      if (typeof msg.max_chars !== 'undefined' && !Number.isInteger(msg.max_chars)) {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
+      if (typeof msg.quality !== 'undefined' && typeof msg.quality !== 'number') {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
+      return { ok: true };
     default:
       return { ok: false, error: 'unknown_type' };
   }

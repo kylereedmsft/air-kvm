@@ -28,3 +28,16 @@ test('validateAgentCommand accepts fw.version.request', () => {
   const result = validateAgentCommand({ type: 'fw.version.request' });
   assert.equal(result.ok, true);
 });
+
+test('validateAgentCommand accepts screenshot.request with tuning fields', () => {
+  const result = validateAgentCommand({
+    type: 'screenshot.request',
+    source: 'tab',
+    request_id: 'r1',
+    max_width: 800,
+    max_height: 450,
+    quality: 0.55,
+    max_chars: 70000
+  });
+  assert.equal(result.ok, true);
+});

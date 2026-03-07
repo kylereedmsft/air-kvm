@@ -9,10 +9,24 @@ import {
 } from '../src/tooling.js';
 
 test('buildCommandForTool maps screenshot tools to screenshot.request', () => {
-  const tab = buildCommandForTool('airkvm_screenshot_tab', { request_id: 'r1' });
+  const tab = buildCommandForTool('airkvm_screenshot_tab', {
+    request_id: 'r1',
+    max_width: 800,
+    max_height: 450,
+    quality: 0.5,
+    max_chars: 70000
+  });
   const desktop = buildCommandForTool('airkvm_screenshot_desktop', { request_id: 'r2' });
 
-  assert.deepEqual(tab, { type: 'screenshot.request', source: 'tab', request_id: 'r1' });
+  assert.deepEqual(tab, {
+    type: 'screenshot.request',
+    source: 'tab',
+    request_id: 'r1',
+    max_width: 800,
+    max_height: 450,
+    quality: 0.5,
+    max_chars: 70000
+  });
   assert.deepEqual(desktop, { type: 'screenshot.request', source: 'desktop', request_id: 'r2' });
 });
 
@@ -69,4 +83,3 @@ test('screenshot collector returns structured error payload', () => {
   assert.equal(done.data.request_id, 'shot-2');
   assert.equal(done.data.error, 'desktop_capture_denied');
 });
-

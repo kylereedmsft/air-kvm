@@ -33,7 +33,11 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        request_id: { type: 'string' }
+        request_id: { type: 'string' },
+        max_width: { type: 'integer', minimum: 160, maximum: 1920 },
+        max_height: { type: 'integer', minimum: 120, maximum: 1080 },
+        quality: { type: 'number', minimum: 0.3, maximum: 0.9 },
+        max_chars: { type: 'integer', minimum: 20000, maximum: 200000 }
       },
       required: []
     }
@@ -44,7 +48,11 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        request_id: { type: 'string' }
+        request_id: { type: 'string' },
+        max_width: { type: 'integer', minimum: 160, maximum: 1920 },
+        max_height: { type: 'integer', minimum: 120, maximum: 1080 },
+        quality: { type: 'number', minimum: 0.3, maximum: 0.9 },
+        max_chars: { type: 'integer', minimum: 20000, maximum: 200000 }
       },
       required: []
     }
@@ -77,14 +85,20 @@ export function buildCommandForTool(name, args = {}) {
       ? args.request_id
       : makeRequestId();
 
+  const screenshotOptions = {};
+  if (Number.isInteger(args?.max_width)) screenshotOptions.max_width = args.max_width;
+  if (Number.isInteger(args?.max_height)) screenshotOptions.max_height = args.max_height;
+  if (typeof args?.quality === 'number') screenshotOptions.quality = args.quality;
+  if (Number.isInteger(args?.max_chars)) screenshotOptions.max_chars = args.max_chars;
+
   if (name === 'airkvm_dom_snapshot') {
     return { type: 'dom.snapshot.request', request_id: requestId };
   }
   if (name === 'airkvm_screenshot_tab') {
-    return { type: 'screenshot.request', source: 'tab', request_id: requestId };
+    return { type: 'screenshot.request', source: 'tab', request_id: requestId, ...screenshotOptions };
   }
   if (name === 'airkvm_screenshot_desktop') {
-    return { type: 'screenshot.request', source: 'desktop', request_id: requestId };
+    return { type: 'screenshot.request', source: 'desktop', request_id: requestId, ...screenshotOptions };
   }
 
   return null;
