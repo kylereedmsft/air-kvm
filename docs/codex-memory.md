@@ -101,6 +101,9 @@
 - DevTools capture trap fix:
   - `chrome.tabs.captureVisibleTab` captures the active tab, which failed when DevTools/extension tab was focused.
   - Updated tab screenshot flow to resolve a valid automation tab and activate it before capture.
+- Desktop chooser prompt fix:
+  - `desktop_capture_denied` could occur without visible picker when chooser was not tab-scoped.
+  - Updated `chooseDesktopMedia` call to pass resolved target tab so user approval prompt is attached to a real browser tab.
 - Bridge health watchdog:
   - Added periodic BLE health ping (`state.request`) in bridge page.
   - If ping ACKs fail consecutively (`kHealthMaxMisses`), bridge now auto-disconnects and updates status.

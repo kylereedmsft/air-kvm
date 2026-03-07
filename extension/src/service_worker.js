@@ -147,9 +147,13 @@ async function captureDesktopPng(config) {
   if (!chrome.desktopCapture?.chooseDesktopMedia) {
     throw new Error('desktop_capture_unavailable');
   }
+  const targetTab = await resolveTargetTab();
+  if (!targetTab?.id) {
+    throw new Error('active_tab_not_found');
+  }
 
   const streamId = await new Promise((resolve, reject) => {
-    chrome.desktopCapture.chooseDesktopMedia(['screen', 'window'], (id) => {
+    chrome.desktopCapture.chooseDesktopMedia(['screen', 'window'], targetTab, (id) => {
       if (!id) {
         reject(new Error('desktop_capture_denied'));
         return;
