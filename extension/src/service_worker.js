@@ -1,9 +1,9 @@
 import { connectBle, postEvent, setBleCommandHandler } from './bridge.js';
 
-const kScreenshotMaxWidth = 1280;
-const kScreenshotMaxHeight = 720;
-const kScreenshotJpegQuality = 0.65;
-const kScreenshotMaxBase64Chars = 180000;
+const kScreenshotMaxWidth = 960;
+const kScreenshotMaxHeight = 540;
+const kScreenshotJpegQuality = 0.55;
+const kScreenshotMaxBase64Chars = 90000;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
@@ -84,6 +84,7 @@ async function encodeBitmapToJpegDataUrl(bitmap) {
   let size = fitWithin(bitmap.width, bitmap.height, kScreenshotMaxWidth, kScreenshotMaxHeight);
   let quality = kScreenshotJpegQuality;
   let bestBlob = null;
+  let bestEstimatedBase64Chars = Number.POSITIVE_INFINITY;
 
   for (let attempt = 0; attempt < 4; attempt += 1) {
     const canvas = new OffscreenCanvas(size.width, size.height);
@@ -94,6 +95,7 @@ async function encodeBitmapToJpegDataUrl(bitmap) {
     bestBlob = blob;
 
     const estimatedBase64Chars = Math.ceil((blob.size * 4) / 3);
+    bestEstimatedBase64Chars = estimatedBase64Chars;
     if (estimatedBase64Chars <= kScreenshotMaxBase64Chars) {
       break;
     }
@@ -106,6 +108,9 @@ async function encodeBitmapToJpegDataUrl(bitmap) {
 
   if (!bestBlob) {
     throw new Error('screenshot_encode_failed');
+  }
+  if (bestEstimatedBase64Chars > kScreenshotMaxBase64Chars) {
+    throw new Error('screenshot_too_large');
   }
   return blobToDataUrl(bestBlob);
 }
