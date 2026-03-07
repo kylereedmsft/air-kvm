@@ -1,4 +1,11 @@
-import { connectBle, disconnectBle, getConnectedDeviceInfo, postEvent, setBleDebugLogger } from './bridge.js';
+import {
+  connectBle,
+  disconnectBle,
+  getConnectedDeviceInfo,
+  postEvent,
+  readBleTxSnapshot,
+  setBleDebugLogger
+} from './bridge.js';
 
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connect');
@@ -145,6 +152,7 @@ async function connectAndBind() {
       return;
     }
     debugLog('connect success');
+    debugLog('connected device', getConnectedDeviceInfo());
     let handshakeOk = false;
     for (let attempt = 1; attempt <= kHandshakeAttempts; attempt += 1) {
       const handshakePending = waitForControlHandshake(state);
@@ -153,6 +161,12 @@ async function connectAndBind() {
       if (okAttempt) {
         handshakeOk = true;
         break;
+      }
+      try {
+        const snapshot = await readBleTxSnapshot();
+        debugLog('handshake snapshot', { attempt, snapshot });
+      } catch (err) {
+        debugLog('handshake snapshot failed', { attempt, error: String(err?.message || err) });
       }
       debugLog('handshake attempt timed out', { attempt });
     }

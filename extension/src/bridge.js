@@ -16,6 +16,12 @@ function debugLog(...args) {
   }
 }
 
+function bytesToHex(view) {
+  if (!view) return '';
+  const bytes = view instanceof Uint8Array ? view : new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+}
+
 let bleDevice = null;
 let rxCharacteristic = null;
 let txCharacteristic = null;
@@ -86,6 +92,8 @@ export async function connectBle(deps = {}) {
     txCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
       const value = event?.target?.value;
       if (!value) return;
+      const raw = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+      debugLog('rx notify', { bytes: raw.length, hex: bytesToHex(raw) });
       onBleBytes(decoder.decode(value), deps.onCommand || commandHandler);
     });
   }
@@ -108,6 +116,21 @@ export function getConnectedDeviceInfo() {
     id: bleDevice?.id || null,
     name: bleDevice?.name || null,
     connected: Boolean(bleDevice?.gatt?.connected)
+  };
+}
+
+export async function readBleTxSnapshot(deps = {}) {
+  if (!txCharacteristic || typeof txCharacteristic.readValue !== 'function') {
+    return null;
+  }
+  const decoder = deps.decoder || new TextDecoder();
+  const value = await txCharacteristic.readValue();
+  const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  const text = decoder.decode(value);
+  return {
+    bytes: bytes.length,
+    hex: bytesToHex(bytes),
+    text
   };
 }
 

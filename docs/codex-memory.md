@@ -59,6 +59,10 @@
     - service: `6E400101-B5A3-F393-E0A9-E50E24DCCB01`
     - RX: `6E400102-B5A3-F393-E0A9-E50E24DCCB01`
     - TX: `6E400103-B5A3-F393-E0A9-E50E24DCCB01`
+- Bridge diagnostics now include deeper BLE stream introspection:
+  - Logs connected device info immediately after GATT connect (before handshake success/failure).
+  - Logs raw notification hex bytes (`rx notify`) from TX characteristic.
+  - On handshake timeout, attempts `readValue()` snapshot on TX characteristic and logs bytes/hex/text.
 
 ## In-Progress / Not Complete
 - BLE HID (HOGP) is not implemented (main blocker).
