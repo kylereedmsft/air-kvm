@@ -1,9 +1,14 @@
 import { connectBle, postEvent, setBleCommandHandler } from './bridge.js';
 
-const kScreenshotMaxWidth = 960;
-const kScreenshotMaxHeight = 540;
-const kScreenshotJpegQuality = 0.55;
-const kScreenshotMaxBase64Chars = 90000;
+const kScreenshotConfig = {
+  maxWidth: 960,
+  maxHeight: 540,
+  jpegQuality: 0.55,
+  maxBase64Chars: 90000,
+  maxAttempts: 4,
+  downscaleFactor: 0.8,
+  minJpegQuality: 0.45
+};
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
@@ -81,12 +86,12 @@ async function blobToDataUrl(blob) {
 }
 
 async function encodeBitmapToJpegDataUrl(bitmap) {
-  let size = fitWithin(bitmap.width, bitmap.height, kScreenshotMaxWidth, kScreenshotMaxHeight);
-  let quality = kScreenshotJpegQuality;
+  let size = fitWithin(bitmap.width, bitmap.height, kScreenshotConfig.maxWidth, kScreenshotConfig.maxHeight);
+  let quality = kScreenshotConfig.jpegQuality;
   let bestBlob = null;
   let bestEstimatedBase64Chars = Number.POSITIVE_INFINITY;
 
-  for (let attempt = 0; attempt < 4; attempt += 1) {
+  for (let attempt = 0; attempt < kScreenshotConfig.maxAttempts; attempt += 1) {
     const canvas = new OffscreenCanvas(size.width, size.height);
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('canvas_2d_unavailable');
@@ -96,20 +101,20 @@ async function encodeBitmapToJpegDataUrl(bitmap) {
 
     const estimatedBase64Chars = Math.ceil((blob.size * 4) / 3);
     bestEstimatedBase64Chars = estimatedBase64Chars;
-    if (estimatedBase64Chars <= kScreenshotMaxBase64Chars) {
+    if (estimatedBase64Chars <= kScreenshotConfig.maxBase64Chars) {
       break;
     }
 
-    const nextWidth = Math.max(1, Math.round(size.width * 0.8));
-    const nextHeight = Math.max(1, Math.round(size.height * 0.8));
+    const nextWidth = Math.max(1, Math.round(size.width * kScreenshotConfig.downscaleFactor));
+    const nextHeight = Math.max(1, Math.round(size.height * kScreenshotConfig.downscaleFactor));
     size = { width: nextWidth, height: nextHeight };
-    quality = Math.max(0.45, quality - 0.1);
+    quality = Math.max(kScreenshotConfig.minJpegQuality, quality - 0.1);
   }
 
   if (!bestBlob) {
     throw new Error('screenshot_encode_failed');
   }
-  if (bestEstimatedBase64Chars > kScreenshotMaxBase64Chars) {
+  if (bestEstimatedBase64Chars > kScreenshotConfig.maxBase64Chars) {
     throw new Error('screenshot_too_large');
   }
   return blobToDataUrl(bestBlob);
