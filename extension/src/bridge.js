@@ -40,12 +40,16 @@ export async function connectBle(deps = {}) {
   bleLineBuffer = '';
 
   const decoder = deps.decoder || new TextDecoder();
-  txCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
-    const value = event?.target?.value;
-    if (!value) return;
-    onBleBytes(decoder.decode(value), deps.onCommand || commandHandler);
-  });
-  await txCharacteristic.startNotifications();
+  if (typeof txCharacteristic?.addEventListener === 'function') {
+    txCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
+      const value = event?.target?.value;
+      if (!value) return;
+      onBleBytes(decoder.decode(value), deps.onCommand || commandHandler);
+    });
+  }
+  if (typeof txCharacteristic?.startNotifications === 'function') {
+    await txCharacteristic.startNotifications();
+  }
 
   device.addEventListener('gattserverdisconnected', () => {
     rxCharacteristic = null;
