@@ -35,3 +35,12 @@ Implement Milestone A from `docs/plan.md`: ESP32 advertises BLE HID (HOGP) and c
    - `{"type":"mouse.move_rel","dx":20,"dy":10}`
    - `{"type":"mouse.click","button":"left"}`
 7. Confirm target machine receives input events (cursor moves, click fires, Enter key injected).
+
+## Remaining work (hardware E2E only)
+1. Validate real screenshot retrieval latency/size on target machine for:
+   - `airkvm_screenshot_tab` default config
+   - `airkvm_screenshot_desktop` default config
+   - one tuned request (`max_width`, `max_height`, `quality`, `max_chars`)
+2. Validate desktop permission-denied UX and confirm structured MCP error payloads in live flow.
+3. Validate oversized screenshot behavior in live flow (`screenshot_too_large`) and confirm no hangs.
+4. Measure and record successful end-to-end timings and payload sizes for final default tuning.
