@@ -1,6 +1,8 @@
 import { dataUrlToMetaAndChunks, resolveScreenshotConfig } from './screenshot_protocol.js';
 const kBleBridgePagePath = 'src/ble_bridge.html';
 const kDebug = true;
+let lastAutomationTabId = null;
+let bridgeTraceSeq = 0;
 
 function debugLog(...args) {
   if (!kDebug) return;
@@ -33,22 +35,85 @@ async function ensureBleBridgePage() {
   return true;
 }
 
+function isAutomationCandidateTab(tab) {
+  if (!tab?.id) return false;
+  const url = String(tab.url || '');
+  if (!url) return true;
+  if (url.startsWith('edge://') || url.startsWith('chrome://')) return false;
+  if (url.startsWith('chrome-extension://') || url.startsWith('edge-extension://')) return false;
+  return true;
+}
+
+async function resolveTargetTab() {
+  if (Number.isInteger(lastAutomationTabId)) {
+    try {
+      const tab = await chrome.tabs.get(lastAutomationTabId);
+      if (isAutomationCandidateTab(tab)) return tab;
+    } catch {
+      // fall through
+    }
+  }
+
+  const candidates = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const active = candidates.find((tab) => isAutomationCandidateTab(tab));
+  if (active) {
+    lastAutomationTabId = active.id;
+    return active;
+  }
+
+  const all = await chrome.tabs.query({ lastFocusedWindow: true });
+  const fallback = all.find((tab) => isAutomationCandidateTab(tab));
+  if (fallback) {
+    lastAutomationTabId = fallback.id;
+    return fallback;
+  }
+  return null;
+}
+
 async function postEventViaBridge(payload) {
-  debugLog('postEventViaBridge tx', { type: payload?.type, keys: Object.keys(payload || {}) });
+  bridgeTraceSeq += 1;
+  const traceId = `sw-${Date.now()}-${bridgeTraceSeq}`;
+  debugLog('postEventViaBridge tx', {
+    traceId,
+    type: payload?.type,
+    keys: Object.keys(payload || {}),
+    bytes: JSON.stringify(payload || {}).length
+  });
   try {
-    const res = await chrome.runtime.sendMessage({ type: 'ble.post', target: 'ble-page', payload });
-    debugLog('postEventViaBridge rx', res);
+    const res = await chrome.runtime.sendMessage({
+      type: 'ble.post',
+      target: 'ble-page',
+      payload,
+      traceId
+    });
+    debugLog('postEventViaBridge rx', { traceId, res });
     return Boolean(res?.ok);
   } catch {
-    debugLog('postEventViaBridge failed');
+    debugLog('postEventViaBridge failed', { traceId });
     return false;
   }
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
+  if (msg.type === 'ble.bridge.status') {
+    debugLog('bridge status', { status: msg.status, detail: msg.detail ?? null, tabId: sender?.tab?.id ?? null });
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg.type.startsWith('ble.')) {
+    // Internal bridge control messages are handled by dedicated listeners below.
+    return;
+  }
   if (msg.target === 'ble-page') return;
+  if (msg.type !== 'busy.changed' && msg.type !== 'dom.summary') {
+    debugLog('ignoring non-bridge content message', { type: msg.type });
+    return;
+  }
   debugLog('runtime message from content', { type: msg.type, tabId: sender?.tab?.id ?? null });
+  if (Number.isInteger(sender?.tab?.id)) {
+    lastAutomationTabId = sender.tab.id;
+  }
 
   postEventViaBridge({ ...msg, tabId: sender?.tab?.id ?? null })
     .then((ok) => sendResponse({ ok }))
@@ -177,16 +242,25 @@ async function compressDataUrlToJpeg(dataUrl, config) {
 async function sendDomSnapshot(command) {
   debugLog('sendDomSnapshot start', command);
   const requestId = command.request_id || makeRequestId();
-  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  const tab = await resolveTargetTab();
   if (!tab?.id) throw new Error('active_tab_not_found');
-  const summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
-  debugLog('sendDomSnapshot got summary', { tabId: tab.id, title: summary?.title ?? null });
+  let summary = null;
+  try {
+    summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
+  } catch (err) {
+    debugLog('sendDomSnapshot tab message failed', String(err?.message || err));
+  }
+  const title = summary?.title || tab.title || '';
+  const normalizedSummary = summary && typeof summary === 'object'
+    ? { ...summary, title: summary.title || title }
+    : { type: 'dom.summary', ts: Date.now(), url: tab.url || '', title, focus: { tag: null, id: null }, actionable: [] };
+  debugLog('sendDomSnapshot got summary', { tabId: tab.id, title: normalizedSummary?.title ?? null });
   await postEventViaBridge({
     type: 'dom.snapshot',
     request_id: requestId,
     tabId: tab.id,
     ts: Date.now(),
-    summary
+    summary: normalizedSummary
   });
 }
 
@@ -249,6 +323,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 chrome.action.onClicked.addListener(async (tab) => {
   debugLog('action clicked', { tabId: tab?.id ?? null });
+  if (isAutomationCandidateTab(tab)) {
+    lastAutomationTabId = tab.id;
+  }
   setBadge('...', '#5B6CFF');
   try {
     await ensureBleBridgePage();

@@ -78,21 +78,41 @@ async function ensureConnected(deps = {}) {
 
 export async function postEvent(payload, deps = {}) {
   const encoder = deps.encoder || new TextEncoder();
+  const traceId = deps.traceId || null;
   try {
     const connected = await ensureConnected(deps);
     if (!connected || !rxCharacteristic) return false;
     const line = `${JSON.stringify(payload)}\n`;
-    debugLog('tx', payload?.type || 'unknown');
-    await rxCharacteristic.writeValueWithoutResponse(encoder.encode(line));
+    const bytes = encoder.encode(line);
+    const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
+    debugLog('tx', {
+      traceId,
+      type: payload?.type || 'unknown',
+      bytes: bytes.length,
+      mode: supportsWithResponse ? 'withResponse' : 'withoutResponse'
+    });
+    if (supportsWithResponse) {
+      try {
+        await rxCharacteristic.writeValueWithResponse(bytes);
+        return true;
+      } catch (err) {
+        debugLog('tx withResponse failed, falling back', {
+          traceId,
+          error: String(err?.message || err)
+        });
+      }
+    }
+    await rxCharacteristic.writeValueWithoutResponse(bytes);
     return true;
   } catch {
-    debugLog('postEvent failed', payload?.type || 'unknown');
+    debugLog('postEvent failed', { traceId, type: payload?.type || 'unknown' });
     return false;
   }
 }
 
 function onBleBytes(text, onCommand) {
   if (!text || typeof text !== 'string') return;
+  debugLog('rx bytes', { bytes: text.length, preview: text.slice(0, 160) });
   bleLineBuffer += text;
   const lines = bleLineBuffer.split('\n');
   bleLineBuffer = lines.pop() || '';

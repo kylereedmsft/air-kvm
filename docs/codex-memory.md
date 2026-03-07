@@ -36,6 +36,8 @@
 - Extension debug logging:
   - Added verbose logs in service worker (`[airkvm-sw]`), BLE bridge page (`[airkvm-bridge]`), and BLE transport module (`[airkvm-ble]`).
   - Intended to debug live DOM/screenshot command flow across bridge + runtime message hops.
+  - Added per-message trace IDs from service worker -> bridge page -> BLE writer.
+  - BLE writer now logs payload byte size and write mode (`withResponse` preferred, fallback to `withoutResponse`).
 
 ## In-Progress / Not Complete
 - BLE HID (HOGP) is not implemented (main blocker).
