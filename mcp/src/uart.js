@@ -1,24 +1,5 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import readline from 'node:readline';
-
-function runStty(portPath, baudRate) {
-  const isMac = process.platform === 'darwin';
-  const args = isMac
-    ? ['-f', portPath, `${baudRate}`, 'raw', '-echo']
-    : ['-F', portPath, `${baudRate}`, 'raw', '-echo'];
-  return new Promise((resolve, reject) => {
-    const child = spawn('stty', args, { stdio: 'ignore' });
-    child.on('error', reject);
-    child.on('exit', (code) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      reject(new Error(`stty_failed:${code}`));
-    });
-  });
-}
 
 export function parseDeviceLine(line) {
   let parsed;
@@ -64,7 +45,6 @@ export class UartTransport {
     if (!this.portPath) throw new Error('serial_port_not_configured');
 
     this.log(`open port=${this.portPath} baud=${this.baudRate}`);
-    await runStty(this.portPath, this.baudRate);
     this.readStream = fs.createReadStream(this.portPath, { encoding: 'utf8' });
     this.writeStream = fs.createWriteStream(this.portPath, { encoding: 'utf8', flags: 'a' });
     this.rl = readline.createInterface({ input: this.readStream, crlfDelay: Infinity });
