@@ -76,3 +76,25 @@ test('airkvm_screenshot_tab returns structured error result on failure', async (
   assert.equal(payload.error, 'permission_denied');
 });
 
+test('airkvm_dom_snapshot returns structured transport error payload', async () => {
+  const { sent, server } = makeHarness(async () => {
+    throw new Error('device_timeout');
+  });
+
+  server.handleRequest({
+    jsonrpc: '2.0',
+    id: 4,
+    method: 'tools/call',
+    params: {
+      name: 'airkvm_dom_snapshot',
+      arguments: { request_id: 'dom-timeout' }
+    }
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(sent[0].isError, true);
+  const payload = JSON.parse(sent[0].result.content[0].text);
+  assert.equal(payload.request_id, 'dom-timeout');
+  assert.equal(payload.error, 'transport_error');
+  assert.equal(payload.detail, 'device_timeout');
+});

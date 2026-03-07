@@ -104,6 +104,19 @@ export function createServer({ transport, send }) {
         result: makeToolResultText(`forwarded ${line}`)
       });
     }).catch((err) => {
+      if (isStructuredTool(name)) {
+        send({
+          jsonrpc: '2.0',
+          id,
+          result: makeToolResultJson({
+            request_id: command.request_id || null,
+            error: 'transport_error',
+            detail: err.message
+          }),
+          isError: true
+        });
+        return;
+      }
       send({
         jsonrpc: '2.0',
         id,
