@@ -38,6 +38,9 @@
   - Intended to debug live DOM/screenshot command flow across bridge + runtime message hops.
   - Added per-message trace IDs from service worker -> bridge page -> BLE writer.
   - BLE writer now logs payload byte size and write mode (`withResponse` preferred, fallback to `withoutResponse`).
+- BLE stream validation:
+  - Bridge now sends `state.request` immediately after connect and requires a valid JSON control reply (`state` or `ok`) within timeout.
+  - If handshake fails and only binary noise is observed, bridge marks connection as invalid stream instead of reporting connected.
 
 ## In-Progress / Not Complete
 - BLE HID (HOGP) is not implemented (main blocker).

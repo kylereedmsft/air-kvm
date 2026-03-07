@@ -3,6 +3,7 @@ import { connectBle, postEvent } from './bridge.js';
 const statusEl = document.getElementById('status');
 const connectBtn = document.getElementById('connect');
 const kDebug = true;
+const kHandshakeTimeoutMs = 2000;
 
 function debugLog(...args) {
   if (!kDebug) return;
@@ -24,16 +25,35 @@ function unwrapCommand(frame) {
   return null;
 }
 
+function waitForControlHandshake(state) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      state.pendingHandshake = null;
+      resolve(false);
+    }, kHandshakeTimeoutMs);
+    state.pendingHandshake = () => {
+      clearTimeout(timer);
+      state.pendingHandshake = null;
+      resolve(true);
+    };
+  });
+}
+
 async function connectAndBind() {
   debugLog('connect click');
   notifySw('connect_click');
   setStatus('Connecting...');
+  const state = { pendingHandshake: null };
   try {
     const ok = await connectBle({
       onCommand: async (command) => {
         const unwrapped = unwrapCommand(command);
         debugLog('rx command from BLE', { raw: command, unwrapped });
-        if (!unwrapped || typeof unwrapped.type !== 'string') return;
+        if (!unwrapped) return;
+        if (state.pendingHandshake && (unwrapped.type === 'state' || typeof unwrapped.ok === 'boolean')) {
+          state.pendingHandshake();
+        }
+        if (typeof unwrapped.type !== 'string') return;
         try {
           await chrome.runtime.sendMessage({ type: 'ble.command', command: unwrapped });
           debugLog('forwarded ble.command to service worker');
@@ -50,6 +70,15 @@ async function connectAndBind() {
       return;
     }
     debugLog('connect success');
+    const handshakePending = waitForControlHandshake(state);
+    await postEvent({ type: 'state.request' }, { traceId: 'bridge-handshake' });
+    const handshakeOk = await handshakePending;
+    if (!handshakeOk) {
+      debugLog('connect invalid stream (no JSON control response)');
+      notifySw('connect_invalid_stream');
+      setStatus('Invalid stream (not AirKVM control)');
+      return;
+    }
     notifySw('connect_success');
     setStatus('Connected');
   } catch (err) {
