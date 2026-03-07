@@ -1,4 +1,5 @@
 pio device monitor --port /dev/cu.usbserial-0001 --baud 115200
+cd /Users/kylereed/project/air-kvm/firmware && pio run -e esp32dev -t upload --upload-port /dev/cu.usbserial-0001
 
 Commands
 {"type":"state.request"}
@@ -15,6 +16,7 @@ Commands
 
 1) MANAGER / PLANNER
 2) WORKER / IMPLEMENTER
+3) REVIEWER / CRITICAL AUDITOR
 
 The Manager is responsible for:
 - understanding the request
@@ -28,6 +30,12 @@ The Worker is responsible for:
 - reporting what files changed and why
 - asking the Manager if something is unclear
 
+The Reviewer is responsible for:
+- critically reviewing every change before commit
+- finding bugs, regressions, edge-case failures, and cross-platform issues
+- flagging missing tests for new behavior
+- blocking commit on critical/high issues unless explicitly waived
+
 Workflow rules:
 
 1. The Manager ALWAYS produces a plan first.
@@ -35,6 +43,8 @@ Workflow rules:
 3. After each step the Manager reviews the result.
 4. If the Worker deviates from the plan, the Manager corrects it.
 5. The Manager may update the plan if new information appears.
+6. Before any commit, Reviewer must run a critical review pass and report findings by severity.
+7. Manager only approves commit when critical/high findings are resolved or explicitly waived.
 
 Output format:
 
