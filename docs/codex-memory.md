@@ -74,6 +74,9 @@
   - Disconnect now clears `bleDevice` in addition to characteristic handles/buffers.
   - Bridge now forwards ack-only control frames (for example `{ "ok": true }`) to service worker instead of dropping non-`type` payloads.
   - Firmware boot identity string now matches control device naming (`air-kvm-ctrl-cb01`).
+- Chooser visibility hotfix:
+  - Strict exact-name filter could hide valid devices during transition.
+  - Bridge chooser now matches by service UUID with fallback filters for both names (`air-kvm-ctrl-cb01`, `air-kvm-poc`) and service-only.
 - Bridge diagnostics now include deeper BLE stream introspection:
   - Logs connected device info immediately after GATT connect (before handshake success/failure).
   - Logs raw notification hex bytes (`rx notify`) from TX characteristic.
