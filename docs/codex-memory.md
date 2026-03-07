@@ -77,6 +77,9 @@
 - Chooser visibility hotfix:
   - Strict exact-name filter could hide valid devices during transition.
   - Bridge chooser now matches by service UUID with fallback filters for both names (`air-kvm-ctrl-cb01`, `air-kvm-poc`) and service-only.
+- Ack frame unwrap fix:
+  - `unwrapCommand` now treats `{ "ok": <bool> }` and `{ "error": <string> }` as valid control frames.
+  - Prevents dropping protocol ack/error frames during bridge forwarding.
 - Bridge diagnostics now include deeper BLE stream introspection:
   - Logs connected device info immediately after GATT connect (before handshake success/failure).
   - Logs raw notification hex bytes (`rx notify`) from TX characteristic.

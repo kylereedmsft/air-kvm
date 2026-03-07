@@ -102,6 +102,8 @@ async function clearPreferredDeviceId() {
 function unwrapCommand(frame) {
   if (!frame || typeof frame !== 'object') return null;
   if (typeof frame.type === 'string') return frame;
+  if (typeof frame.ok === 'boolean') return frame;
+  if (typeof frame.error === 'string') return frame;
   if (frame.ch === 'ctrl' && frame.msg && typeof frame.msg === 'object') return frame.msg;
   return null;
 }
