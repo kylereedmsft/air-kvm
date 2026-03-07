@@ -23,3 +23,9 @@ __pycache__/
 dist/
 build/
 out/
+
+# Local firmware host test binary
+firmware/host_test/host_test_bin
+
+# Local firmware host test binary
+firmware/host_test/host_test_bin
