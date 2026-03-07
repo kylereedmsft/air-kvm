@@ -1,5 +1,6 @@
 import readline from 'node:readline';
 import { validateAgentCommand, toDeviceLine } from './protocol.js';
+import { UartTransport } from './uart.js';
 
 function send(obj) {
   process.stdout.write(`${JSON.stringify(obj)}\n`);
@@ -8,6 +9,17 @@ function send(obj) {
 function makeToolResultText(text) {
   return { content: [{ type: 'text', text }] };
 }
+
+const SERIAL_PORT = process.env.AIRKVM_SERIAL_PORT || '/dev/cu.usbserial-0001';
+const SERIAL_BAUD = Number.parseInt(process.env.AIRKVM_SERIAL_BAUD || '115200', 10);
+const SERIAL_TIMEOUT_MS = Number.parseInt(process.env.AIRKVM_SERIAL_TIMEOUT_MS || '3000', 10);
+const UART_DEBUG = process.env.AIRKVM_UART_DEBUG === '1';
+const transport = new UartTransport({
+  portPath: SERIAL_PORT,
+  baudRate: Number.isNaN(SERIAL_BAUD) ? 115200 : SERIAL_BAUD,
+  commandTimeoutMs: Number.isNaN(SERIAL_TIMEOUT_MS) ? 3000 : SERIAL_TIMEOUT_MS,
+  debug: UART_DEBUG
+});
 
 function onInitialize(id) {
   send({
@@ -69,12 +81,39 @@ function onToolCall(id, params) {
     return;
   }
 
-  // POC transport: emit a device-line preview. Replace with serial write in next iteration.
   const line = toDeviceLine(command).trim();
-  send({
-    jsonrpc: '2.0',
-    id,
-    result: makeToolResultText(`forwarded ${line}`)
+  transport.sendCommand(command).then((result) => {
+    const isStateResponse = result?.msg?.type === 'state' && typeof result?.msg?.busy === 'boolean';
+    const isExplicitRejection = result?.msg && result.ok === false;
+    if (isExplicitRejection) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: makeToolResultText(`device rejected ${line}: ${JSON.stringify(result.msg)}`),
+        isError: true
+      });
+      return;
+    }
+    if (command.type === 'state.request' && isStateResponse) {
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: makeToolResultText(`forwarded ${line}; state=${JSON.stringify(result.msg)}`)
+      });
+      return;
+    }
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: makeToolResultText(`forwarded ${line}`)
+    });
+  }).catch((err) => {
+    send({
+      jsonrpc: '2.0',
+      id,
+      result: makeToolResultText(`transport error: ${err.message}`),
+      isError: true
+    });
   });
 }
 
@@ -110,4 +149,13 @@ rl.on('line', (line) => {
   } catch {
     // Ignore malformed input to keep STDIO loop resilient.
   }
+});
+rl.on('close', () => {
+  transport.close();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  transport.close();
+  process.exit(0);
 });

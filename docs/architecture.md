@@ -1,5 +1,12 @@
 # Architecture (POC)
 
+## Deployment topology
+
+- Controller/host machine: runs AI agent + MCP server + UART link to ESP32 firmware.
+- Target machine: runs only the browser extension.
+- Extension never connects to MCP.
+- Extension external transport is BLE only.
+
 ## Layers
 
 1. Firmware (`firmware/`, ESP-WROOM-32)
@@ -10,18 +17,17 @@
 2. Local MCP Server (`mcp/`)
 - STDIO JSON-RPC server with MCP-compatible tool endpoints
 - Validates AI-issued control commands
-- Bridges commands to firmware transport (serial transport stubbed)
+- Bridges commands to firmware over UART serial (`AIRKVM_SERIAL_PORT`)
 
 3. Browser Extension (`extension/`)
 - Content script emits compact DOM summary + busy/idle events
-- Service worker forwards extension events to local host endpoint
+- Service worker forwards extension events via BLE only
 - Future: on-demand screenshot capture + chunk transport
 
 ## Data flows
 
 - AI agent -> MCP tool call -> validated command -> firmware transport
 - Firmware -> BLE HID -> target machine input injection
-- Target browser extension -> local endpoint -> AI context
 
 ## Why this split
 

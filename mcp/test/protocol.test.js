@@ -18,3 +18,13 @@ test('toDeviceLine returns JSONL', () => {
   const line = toDeviceLine({ type: 'state.request' });
   assert.equal(line, '{"type":"state.request"}\n');
 });
+
+test('validateAgentCommand accepts state.set with boolean busy', () => {
+  const result = validateAgentCommand({ type: 'state.set', busy: true });
+  assert.equal(result.ok, true);
+});
+
+test('validateAgentCommand accepts fw.version.request', () => {
+  const result = validateAgentCommand({ type: 'fw.version.request' });
+  assert.equal(result.ok, true);
+});

@@ -13,6 +13,15 @@ enum class CommandType {
   kMouseClick,
   kKeyTap,
   kStateRequest,
+  kStateSet,
+  kFwVersionRequest,
+  kDomSnapshotRequest,
+  kScreenshotRequest,
+  kDomSnapshot,
+  kDomSnapshotError,
+  kScreenshotMeta,
+  kScreenshotChunk,
+  kScreenshotError,
 };
 
 struct Command {
@@ -21,8 +30,12 @@ struct Command {
   int dy{0};
   int x{0};
   int y{0};
+  bool busy{false};
   std::string button;
   std::string key;
+  std::string source;
+  std::string request_id;
+  std::string raw;
 };
 
 // Parse a constrained JSON-line command without dynamic JSON dependencies.

@@ -32,6 +32,16 @@ std::string ExtractString(const std::string& s, const std::string& key) {
   return s.substr(start, end - start);
 }
 
+bool ExtractBool(const std::string& s, const std::string& key, bool fallback) {
+  const std::string pattern = "\"" + key + "\":";
+  const auto pos = s.find(pattern);
+  if (pos == std::string::npos) return fallback;
+  const auto start = pos + pattern.size();
+  if (s.compare(start, 4, "true") == 0) return true;
+  if (s.compare(start, 5, "false") == 0) return false;
+  return fallback;
+}
+
 }  // namespace
 
 std::optional<Command> ParseCommandLine(const std::string& line) {
@@ -66,6 +76,70 @@ std::optional<Command> ParseCommandLine(const std::string& line) {
 
   if (Contains(line, "\"type\":\"state.request\"")) {
     cmd.type = CommandType::kStateRequest;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"state.set\"")) {
+    cmd.type = CommandType::kStateSet;
+    cmd.busy = ExtractBool(line, "busy", false);
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"fw.version.request\"")) {
+    cmd.type = CommandType::kFwVersionRequest;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"dom.snapshot.request\"")) {
+    cmd.type = CommandType::kDomSnapshotRequest;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"screenshot.request\"")) {
+    cmd.type = CommandType::kScreenshotRequest;
+    cmd.source = ExtractString(line, "source");
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"dom.snapshot\"")) {
+    cmd.type = CommandType::kDomSnapshot;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"dom.snapshot.error\"")) {
+    cmd.type = CommandType::kDomSnapshotError;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"screenshot.meta\"")) {
+    cmd.type = CommandType::kScreenshotMeta;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.source = ExtractString(line, "source");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"screenshot.chunk\"")) {
+    cmd.type = CommandType::kScreenshotChunk;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.source = ExtractString(line, "source");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"screenshot.error\"")) {
+    cmd.type = CommandType::kScreenshotError;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.source = ExtractString(line, "source");
+    cmd.raw = line;
     return cmd;
   }
 
