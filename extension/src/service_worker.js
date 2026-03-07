@@ -3,6 +3,7 @@ import { connectBle, postEvent, setBleCommandHandler } from './bridge.js';
 const kScreenshotMaxWidth = 1280;
 const kScreenshotMaxHeight = 720;
 const kScreenshotJpegQuality = 0.65;
+const kScreenshotMaxBase64Chars = 180000;
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
@@ -80,13 +81,33 @@ async function blobToDataUrl(blob) {
 }
 
 async function encodeBitmapToJpegDataUrl(bitmap) {
-  const size = fitWithin(bitmap.width, bitmap.height, kScreenshotMaxWidth, kScreenshotMaxHeight);
-  const canvas = new OffscreenCanvas(size.width, size.height);
-  const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('canvas_2d_unavailable');
-  ctx.drawImage(bitmap, 0, 0, size.width, size.height);
-  const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality: kScreenshotJpegQuality });
-  return blobToDataUrl(blob);
+  let size = fitWithin(bitmap.width, bitmap.height, kScreenshotMaxWidth, kScreenshotMaxHeight);
+  let quality = kScreenshotJpegQuality;
+  let bestBlob = null;
+
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const canvas = new OffscreenCanvas(size.width, size.height);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('canvas_2d_unavailable');
+    ctx.drawImage(bitmap, 0, 0, size.width, size.height);
+    const blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+    bestBlob = blob;
+
+    const estimatedBase64Chars = Math.ceil((blob.size * 4) / 3);
+    if (estimatedBase64Chars <= kScreenshotMaxBase64Chars) {
+      break;
+    }
+
+    const nextWidth = Math.max(1, Math.round(size.width * 0.8));
+    const nextHeight = Math.max(1, Math.round(size.height * 0.8));
+    size = { width: nextWidth, height: nextHeight };
+    quality = Math.max(0.45, quality - 0.1);
+  }
+
+  if (!bestBlob) {
+    throw new Error('screenshot_encode_failed');
+  }
+  return blobToDataUrl(bestBlob);
 }
 
 async function compressDataUrlToJpeg(dataUrl) {
