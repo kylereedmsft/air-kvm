@@ -106,3 +106,23 @@ GATT profile:
 - TX (notify/read): `6E400103-B5A3-F393-E0A9-E50E24DCCB01`
 
 Control messages are JSON UTF-8 payloads; screenshot chunk payloads are raw binary frames.
+
+## BLE Control Continuation (`ctrl.chunk`)
+
+To handle BLE notification payload limits, firmware may split large control JSON payloads into chunk messages for BLE only:
+
+```json
+{"type":"ctrl.chunk","chunk_id":42,"seq":0,"total":3,"frag":"{\"type\":\"transfer.meta\"..."}
+```
+
+Fields:
+- `chunk_id`: uint32 sender-local chunk session id.
+- `seq`: zero-based fragment index.
+- `total`: total number of fragments in this chunked control message.
+- `frag`: escaped JSON substring fragment.
+
+Receiver behavior (extension bridge):
+- Buffer fragments by `chunk_id`.
+- Reassemble when all `seq` in `[0..total-1]` are present.
+- Parse concatenated JSON and forward only the fully reassembled control message.
+- Ignore standalone `ctrl.chunk` fragments at handler layer.

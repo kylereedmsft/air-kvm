@@ -62,6 +62,9 @@ let rxCharacteristic = null;
 let txCharacteristic = null;
 let bleLineBuffer = '';
 let commandHandler = null;
+const controlChunkSessions = new Map();
+const kControlChunkTtlMs = 15000;
+const kControlChunkMaxSessions = 64;
 
 export function __resetBleForTest() {
   bleDevice = null;
@@ -69,6 +72,7 @@ export function __resetBleForTest() {
   txCharacteristic = null;
   bleLineBuffer = '';
   commandHandler = null;
+  controlChunkSessions.clear();
   debugLogger = null;
 }
 
@@ -340,11 +344,71 @@ function onBleBytes(text, onCommand) {
   for (const serialized of messages) {
     try {
       const msg = JSON.parse(serialized);
+      const maybeReassembled = maybeReassembleControlChunk(msg);
+      if (maybeReassembled) {
+        debugLog('rx json reassembled', maybeReassembled?.type || 'unknown');
+        if (typeof onCommand === 'function') onCommand(maybeReassembled);
+        continue;
+      }
+      if (msg?.type === 'ctrl.chunk') {
+        continue;
+      }
       debugLog('rx json', msg?.type || 'unknown');
       if (typeof onCommand === 'function') onCommand(msg);
     } catch {
       // Ignore malformed objects.
     }
+  }
+}
+
+function maybeReassembleControlChunk(msg) {
+  if (!msg || msg.type !== 'ctrl.chunk') return null;
+  const chunkId = Number.isInteger(msg.chunk_id) ? msg.chunk_id : null;
+  const seq = Number.isInteger(msg.seq) ? msg.seq : null;
+  const total = Number.isInteger(msg.total) ? msg.total : null;
+  const frag = typeof msg.frag === 'string' ? msg.frag : null;
+  if (chunkId === null || seq === null || total === null || frag === null) return null;
+  if (seq < 0 || total <= 0 || seq >= total) return null;
+
+  pruneControlChunkSessions();
+  let session = controlChunkSessions.get(chunkId);
+  if (!session || session.total !== total) {
+    if (controlChunkSessions.size >= kControlChunkMaxSessions) {
+      pruneControlChunkSessions(true);
+    }
+    session = {
+      total,
+      parts: new Array(total).fill(null),
+      updatedAt: Date.now()
+    };
+    controlChunkSessions.set(chunkId, session);
+  }
+  session.parts[seq] = frag;
+  session.updatedAt = Date.now();
+  if (session.parts.some((part) => part === null)) return null;
+
+  controlChunkSessions.delete(chunkId);
+  const full = session.parts.join('');
+  try {
+    return JSON.parse(full);
+  } catch {
+    return null;
+  }
+}
+
+function pruneControlChunkSessions(forceOne = false) {
+  const now = Date.now();
+  let removed = 0;
+  for (const [chunkId, session] of controlChunkSessions.entries()) {
+    if (!session || now - (session.updatedAt || 0) > kControlChunkTtlMs) {
+      controlChunkSessions.delete(chunkId);
+      removed += 1;
+      if (forceOne && removed > 0) return;
+    }
+  }
+  if (forceOne && removed === 0 && controlChunkSessions.size > 0) {
+    const first = controlChunkSessions.keys().next().value;
+    controlChunkSessions.delete(first);
   }
 }
 

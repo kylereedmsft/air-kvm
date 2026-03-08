@@ -37,11 +37,11 @@ test('dataUrlToMetaAndChunks emits compact keys and chunked payload', () => {
   assert.equal(meta.chunk_size, 4);
   assert.equal(meta.total_chunks, 3);
   assert.equal(meta.total_bytes, 12);
-  assert.equal(meta.total_chars, 16);
-  assert.equal(meta.encoded_width, 640);
-  assert.equal(meta.encoded_height, 360);
-  assert.equal(meta.encoded_quality, 0.55);
-  assert.equal(meta.encode_attempts, 2);
+  assert.equal(meta.total_chars, undefined);
+  assert.equal(meta.encoded_width, undefined);
+  assert.equal(meta.encoded_height, undefined);
+  assert.equal(meta.encoded_quality, undefined);
+  assert.equal(meta.encode_attempts, undefined);
 
   assert.equal(chunks.length, 3);
   assert.equal(chunks[0].seq, 0);

@@ -327,3 +327,10 @@
   - Validation:
     - `cd firmware && pio test -e native` pass
     - `cd firmware && pio run -e esp32dev` pass
+- BLE control continuation added (March 8, 2026, exploration):
+  - Root cause evidence: `transfer.meta` control JSON was truncated at BLE notify size and poisoned bridge JSON parsing, preventing subsequent `transfer.ack`/`transfer.resume` handling.
+  - Firmware now supports BLE-only control chunking:
+    - large control payloads are sent as `{"type":"ctrl.chunk","chunk_id","seq","total","frag"}` frames.
+  - Extension bridge now reassembles `ctrl.chunk` fragments by `chunk_id`, parses full JSON only after all fragments arrive, and suppresses partial fragments from command handlers.
+  - Added bridge unit test verifying `ctrl.chunk` reassembly into a single forwarded control command.
+  - Current limitation (known): continuation is currently implemented for firmware->extension control path; reverse direction continuation is not yet implemented.

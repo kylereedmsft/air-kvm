@@ -16,6 +16,8 @@ constexpr const char* kCtrlPrefix = "{\"ch\":\"ctrl\",\"msg\":";
 constexpr const char* kCtrlSuffix = "}";
 constexpr const char* kLogPrefix = "{\"ch\":\"log\",\"msg\":\"";
 constexpr const char* kLogSuffix = "\"}";
+constexpr size_t kBleControlDirectMaxBytes = 180;
+constexpr size_t kBleControlChunkFragChars = 96;
 
 String ExtractTypeField(const char* payload) {
   if (payload == nullptr) return String("unknown");
@@ -84,17 +86,7 @@ void TransportMux::EmitControl(const char* payload) {
       kCtrlSuffix);
   EnqueueFrame(frame);
 
-  if (tx_char_ != nullptr) {
-    const String type = ExtractTypeField(payload);
-    std::string ble_payload(payload);
-    ble_payload.push_back('\n');
-    tx_char_->setValue(
-        reinterpret_cast<const uint8_t*>(ble_payload.data()), ble_payload.size());
-    tx_char_->notify();
-    if (ShouldTraceBleControlForward(type)) {
-      EmitLog(String("ble.ctrl_notify_sent type=") + type);
-    }
-  }
+  EmitBleControl(payload);
 }
 
 void TransportMux::EmitBinaryFrame(const uint8_t* bytes, size_t len) {
@@ -158,6 +150,60 @@ String TransportMux::JsonEscape(const String& in) {
     escaped += c;
   }
   return escaped;
+}
+
+void TransportMux::EmitBleControl(const char* payload) {
+  if (tx_char_ == nullptr || payload == nullptr) return;
+  const String type = ExtractTypeField(payload);
+  const size_t payload_len = std::strlen(payload);
+  if (payload_len <= kBleControlDirectMaxBytes) {
+    std::string ble_payload(payload);
+    ble_payload.push_back('\n');
+    tx_char_->setValue(
+        reinterpret_cast<const uint8_t*>(ble_payload.data()), ble_payload.size());
+    tx_char_->notify();
+    if (ShouldTraceBleControlForward(type)) {
+      EmitLog(String("ble.ctrl_notify_sent type=") + type);
+    }
+    return;
+  }
+  EmitBleControlChunked(payload);
+  if (ShouldTraceBleControlForward(type)) {
+    EmitLog(String("ble.ctrl_notify_chunked type=") + type +
+            " bytes=" + String(payload_len));
+  }
+}
+
+String TransportMux::BuildCtrlChunkMessage(uint32_t chunk_id, size_t seq, size_t total, const String& frag) {
+  String out = "{\"type\":\"ctrl.chunk\",\"chunk_id\":";
+  out += String(chunk_id);
+  out += ",\"seq\":";
+  out += String(seq);
+  out += ",\"total\":";
+  out += String(total);
+  out += ",\"frag\":\"";
+  out += JsonEscape(frag);
+  out += "\"}";
+  return out;
+}
+
+void TransportMux::EmitBleControlChunked(const char* payload) {
+  if (tx_char_ == nullptr || payload == nullptr) return;
+  const String full(payload);
+  const size_t len = full.length();
+  const size_t total = (len + kBleControlChunkFragChars - 1) / kBleControlChunkFragChars;
+  const uint32_t chunk_id = ble_chunk_id_++;
+  for (size_t seq = 0; seq < total; seq += 1) {
+    const size_t start = seq * kBleControlChunkFragChars;
+    const size_t frag_len = std::min(kBleControlChunkFragChars, len - start);
+    const String frag = full.substring(start, start + frag_len);
+    const String chunk_msg = BuildCtrlChunkMessage(chunk_id, seq, total, frag);
+    std::string ble_payload(chunk_msg.c_str());
+    ble_payload.push_back('\n');
+    tx_char_->setValue(
+        reinterpret_cast<const uint8_t*>(ble_payload.data()), ble_payload.size());
+    tx_char_->notify();
+  }
 }
 
 #if defined(ESP32)

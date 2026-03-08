@@ -31,7 +31,7 @@ export function resolveScreenshotConfig(command, base = kDefaultScreenshotConfig
   };
 }
 
-export function dataUrlToMetaAndChunks(dataUrl, requestId, source, transferId, encodeStats = null, chunkSize = 160) {
+export function dataUrlToMetaAndChunks(dataUrl, requestId, source, transferId, _encodeStats = null, chunkSize = 160) {
   const comma = dataUrl.indexOf(',');
   if (comma === -1) throw new Error('screenshot_invalid_data_url');
 
@@ -52,12 +52,7 @@ export function dataUrlToMetaAndChunks(dataUrl, requestId, source, transferId, e
     encoding: 'bin',
     chunk_size: chunkSize,
     total_chunks: totalChunks,
-    total_bytes: totalBytes,
-    total_chars: base64.length,
-    encoded_width: encodeStats?.encodedWidth || null,
-    encoded_height: encodeStats?.encodedHeight || null,
-    encoded_quality: encodeStats?.encodedQuality || null,
-    encode_attempts: encodeStats?.attempts || null
+    total_bytes: totalBytes
   };
 
   const chunks = [];
