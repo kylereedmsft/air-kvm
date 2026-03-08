@@ -214,9 +214,12 @@ export function createResponseCollector(name, command) {
     let lastAckSeq = -1;
     let pendingGapNackSeq = null;
     let timeoutRetries = 0;
+    let preMetaTimeoutRetries = 0;
     let sawTransferDone = false;
     const kMaxTimeoutRetries = 3;
+    const kMaxPreMetaTimeoutRetries = 6;
     const kAckStride = 8;
+    const kPreMetaExtendMs = 5000;
     const maxRawBytes = Math.floor((maxChars * 3) / 4);
 
     function computeHighestContiguousSeq() {
@@ -433,7 +436,27 @@ export function createResponseCollector(name, command) {
       };
     };
     onFrame.onTimeout = () => {
-      if (!transferId) return null;
+      if (!transferId) {
+        if (preMetaTimeoutRetries >= kMaxPreMetaTimeoutRetries) {
+          return {
+            done: true,
+            ok: false,
+            data: {
+              request_id: requestId,
+              source: command.source,
+              error: 'screenshot_meta_timeout',
+              detail: {
+                retries: preMetaTimeoutRetries
+              }
+            }
+          };
+        }
+        preMetaTimeoutRetries += 1;
+        return {
+          done: false,
+          extendTimeoutMs: kPreMetaExtendMs
+        };
+      }
       if (timeoutRetries >= kMaxTimeoutRetries) {
         return {
           done: true,

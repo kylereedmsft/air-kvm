@@ -175,6 +175,22 @@ test('binary screenshot collector timeout handler emits transfer.resume', () => 
   assert.equal(timed.outbound[0].from_seq, 1);
 });
 
+test('binary screenshot collector waits before failing when transfer meta is missing', () => {
+  const command = { type: 'screenshot.request', source: 'tab', request_id: 'shot-pre-meta', encoding: 'bin' };
+  const collect = createResponseCollector('airkvm_screenshot_tab', command);
+
+  for (let i = 0; i < 6; i += 1) {
+    const timed = collect.onTimeout();
+    assert.equal(timed.done, false);
+    assert.equal(timed.extendTimeoutMs, 5000);
+  }
+
+  const finalTimed = collect.onTimeout();
+  assert.equal(finalTimed.done, true);
+  assert.equal(finalTimed.ok, false);
+  assert.equal(finalTimed.data.error, 'screenshot_meta_timeout');
+});
+
 test('screenshot collector returns structured error payload', () => {
   const command = { type: 'screenshot.request', source: 'desktop', request_id: 'shot-2', encoding: 'bin' };
   const collect = createResponseCollector('airkvm_screenshot_desktop', command);

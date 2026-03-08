@@ -363,3 +363,13 @@
   - Regression found immediately after rollout: device could fail to appear in BLE chooser.
     - Cause: fail-fast queue init + large `TxFrame` size made queue allocation too heavy at depth 128.
     - Fix: reduced TX queue depth to 12 to keep single-path behavior without startup allocation failure.
+- Screenshot timeout behavior correction (March 8, 2026):
+  - MCP screenshot collector timed out too early when no `transfer.meta` had arrived yet.
+  - Added explicit pre-meta timeout window:
+    - retries: 6
+    - extend interval: 5000ms
+    - terminal error: `screenshot_meta_timeout`
+  - Transfer-phase timeout/retry behavior after meta (`transfer.resume`, bounded retries) remains unchanged.
+  - Live debug validation (`AIRKVM_UART_DEBUG=1`):
+    - desktop screenshot request completed end-to-end with progressive `transfer.ack` and final `transfer.done.ack`.
+    - response returned `mime=image/jpeg`, `encoding=bin`, and full base64 payload.

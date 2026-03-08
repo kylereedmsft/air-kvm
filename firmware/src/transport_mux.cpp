@@ -98,7 +98,7 @@ bool EncodeUartFramedText(
 void TransportMux::Begin() {
 #if defined(ESP32)
   if (tx_queue_ != nullptr) return;
-  tx_queue_ = static_cast<void*>(xQueueCreate(12, sizeof(TxFrame)));
+  tx_queue_ = static_cast<void*>(xQueueCreate(32, sizeof(TxFrame)));
   if (tx_queue_ == nullptr) {
     Serial.println("{\"ch\":\"log\",\"msg\":\"fatal:tx_queue_create_failed\"}");
     Serial.flush();
