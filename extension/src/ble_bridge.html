@@ -20,6 +20,9 @@
         font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
         margin: 0;
         padding: 18px;
+        min-height: 100vh;
+        box-sizing: border-box;
+        display: flex;
         color: var(--text);
         background:
           radial-gradient(1200px 450px at 10% -10%, #243243 0%, transparent 60%),
@@ -27,6 +30,8 @@
           var(--bg);
       }
       .card {
+        width: 100%;
+        flex: 1;
         max-width: 1080px;
         margin: 0 auto;
         border: 1px solid var(--border);
@@ -34,6 +39,9 @@
         background: linear-gradient(180deg, #17212b 0%, #131b24 100%);
         box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
         padding: 18px;
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
       }
       h3 {
         margin: 0 0 6px;
@@ -70,16 +78,16 @@
       }
       #log {
         margin-top: 12px;
+        flex: 1;
         border: 1px solid var(--border);
         border-radius: 6px;
         background: #0d1218;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
         line-height: 1.35;
-        height: 20lh;
+        height: auto;
         min-height: 120px;
-        max-height: 75vh;
-        resize: vertical;
+        max-height: none;
         overflow: auto;
       }
       .log-row {
