@@ -1,9 +1,8 @@
 import { SerialPort } from 'serialport';
 import { tryExtractFrameFromBuffer } from './binary_frame.js';
 
-function startsWithBinaryMagic(buffer) {
-  return buffer.length >= 2 && buffer[0] === 0x41 && buffer[1] === 0x4b;
-}
+const kMagic0 = 0x41;
+const kMagic1 = 0x4b;
 
 export function parseDeviceLine(line) {
   let parsed;
@@ -100,35 +99,35 @@ export class UartTransport {
     const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     this.readBuffer = Buffer.concat([this.readBuffer, incoming]);
     while (this.readBuffer.length > 0) {
-      const maybeBinary = tryExtractFrameFromBuffer(this.readBuffer);
-      if (maybeBinary) {
-        this.readBuffer = this.readBuffer.subarray(maybeBinary.consumed);
-        const frame = maybeBinary.frame;
-        this.recentFrames.push(frame);
-        if (this.recentFrames.length > 200) {
-          this.recentFrames.shift();
+      if (this.readBuffer[0] !== kMagic0) {
+        const nextMagic = this.readBuffer.indexOf(kMagic0, 1);
+        if (nextMagic === -1) {
+          this.readBuffer = Buffer.alloc(0);
+          break;
         }
-        if (this.currentWaiter) {
-          this.currentWaiter.onFrame(frame);
-        }
+        this.readBuffer = this.readBuffer.subarray(nextMagic);
+        continue;
+      }
+      if (this.readBuffer.length < 2) {
+        break;
+      }
+      if (this.readBuffer[1] !== kMagic1) {
+        this.readBuffer = this.readBuffer.subarray(1);
         continue;
       }
 
-      // If this starts like a binary frame but we do not have all bytes yet,
-      // do not split on newline bytes that may exist inside payload.
-      if (startsWithBinaryMagic(this.readBuffer)) {
+      const maybeFrame = tryExtractFrameFromBuffer(this.readBuffer);
+      if (!maybeFrame) {
         break;
       }
-
-      const newline = this.readBuffer.indexOf(0x0a);
-      if (newline === -1) {
-        break;
+      this.readBuffer = this.readBuffer.subarray(maybeFrame.consumed);
+      const frame = maybeFrame.frame;
+      this.recentFrames.push(frame);
+      if (this.recentFrames.length > 200) {
+        this.recentFrames.shift();
       }
-      const lineBytes = this.readBuffer.subarray(0, newline);
-      this.readBuffer = this.readBuffer.subarray(newline + 1);
-      const line = lineBytes.toString('utf8').replace(/\r$/, '');
-      if (line.length > 0) {
-        this.onLine(line);
+      if (this.currentWaiter) {
+        this.currentWaiter.onFrame(frame);
       }
     }
   }

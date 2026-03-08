@@ -20,7 +20,7 @@ class TransportMux {
 
  private:
   static constexpr size_t kMaxUartLineLen = 1024;
-  static constexpr size_t kMaxBinaryFrameLen = 512;
+  static constexpr size_t kMaxBinaryFrameLen = 1400;
   struct TxFrame {
     bool is_binary;
     char uart_line[kMaxUartLineLen];

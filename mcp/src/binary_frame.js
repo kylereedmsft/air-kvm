@@ -2,10 +2,12 @@ const kMagic0 = 0x41; // 'A'
 const kMagic1 = 0x4b; // 'K'
 const kVersion = 1;
 const kFrameTypeTransferChunk = 1;
+const kFrameTypeControlJson = 2;
+const kFrameTypeLogText = 3;
 const kFixedHeaderLen = 14;
 const kCrcLen = 4;
 const kMinFrameLen = kFixedHeaderLen + kCrcLen;
-const kMaxPayloadLen = 1024;
+const kMaxPayloadLen = 4096;
 
 let crcTable = null;
 
@@ -74,14 +76,53 @@ export function encodeTransferChunkFrame({ transferId, seq, payload }) {
   return out;
 }
 
-export function decodeTransferChunkFrame(bytes) {
+function encodeTextFrame({ frameType, text }) {
+  if (frameType !== kFrameTypeControlJson && frameType !== kFrameTypeLogText) {
+    throw new Error('invalid_frame_type');
+  }
+  if (typeof text !== 'string' || text.length === 0) {
+    throw new Error('invalid_text');
+  }
+  const payloadBytes = Buffer.from(text, 'utf8');
+  if (payloadBytes.length > kMaxPayloadLen) {
+    throw new Error('payload_too_large');
+  }
+  const out = Buffer.alloc(kMinFrameLen + payloadBytes.length);
+  out[0] = kMagic0;
+  out[1] = kMagic1;
+  out[2] = kVersion;
+  out[3] = frameType;
+  out.writeUInt32LE(0, 4);
+  out.writeUInt32LE(0, 8);
+  out.writeUInt16LE(payloadBytes.length, 12);
+  payloadBytes.copy(out, kFixedHeaderLen);
+  const crc = crc32(out.subarray(2, kFixedHeaderLen + payloadBytes.length));
+  out.writeUInt32LE(crc >>> 0, kFixedHeaderLen + payloadBytes.length);
+  return out;
+}
+
+export function encodeControlFrame(msg) {
+  if (!msg || typeof msg !== 'object') throw new Error('invalid_ctrl_msg');
+  return encodeTextFrame({
+    frameType: kFrameTypeControlJson,
+    text: JSON.stringify(msg)
+  });
+}
+
+export function encodeLogFrame(text) {
+  return encodeTextFrame({
+    frameType: kFrameTypeLogText,
+    text
+  });
+}
+
+export function decodeUartFrame(bytes) {
   const frame = Buffer.from(bytes);
   if (frame.length < kMinFrameLen) return { ok: false, error: 'frame_too_short' };
   if (frame[0] !== kMagic0 || frame[1] !== kMagic1) return { ok: false, error: 'bad_magic' };
   const version = frame[2];
   const frameType = frame[3];
   if (version !== kVersion) return { ok: false, error: 'bad_version' };
-  if (frameType !== kFrameTypeTransferChunk) return { ok: false, error: 'bad_type' };
 
   const transferId = frame.readUInt32LE(4);
   const seq = frame.readUInt32LE(8);
@@ -97,15 +138,44 @@ export function decodeTransferChunkFrame(bytes) {
   const gotCrc = frame.readUInt32LE(kFixedHeaderLen + payloadLen);
   const wantCrc = crc32(frame.subarray(2, kFixedHeaderLen + payloadLen));
   if (gotCrc !== wantCrc) {
-    return { ok: false, error: 'crc_mismatch', transferId, seq, gotCrc, wantCrc };
+    return { ok: false, error: 'crc_mismatch', frameType, transferId, seq, gotCrc, wantCrc };
   }
-  return {
-    ok: true,
-    transferId,
-    seq,
-    payload: Buffer.from(payload),
-    payloadLen
-  };
+
+  if (frameType === kFrameTypeTransferChunk) {
+    return {
+      ok: true,
+      frameType,
+      transferId,
+      seq,
+      payload: Buffer.from(payload),
+      payloadLen
+    };
+  }
+  if (frameType === kFrameTypeControlJson) {
+    try {
+      const parsed = JSON.parse(payload.toString('utf8'));
+      if (!parsed || typeof parsed !== 'object') {
+        return { ok: false, error: 'invalid_ctrl_json', frameType };
+      }
+      return {
+        ok: true,
+        frameType,
+        payloadLen,
+        msg: parsed
+      };
+    } catch {
+      return { ok: false, error: 'invalid_ctrl_json', frameType };
+    }
+  }
+  if (frameType === kFrameTypeLogText) {
+    return {
+      ok: true,
+      frameType,
+      payloadLen,
+      text: payload.toString('utf8')
+    };
+  }
+  return { ok: false, error: 'bad_type', frameType };
 }
 
 export function tryExtractFrameFromBuffer(buffer) {
@@ -122,9 +192,12 @@ export function tryExtractFrameFromBuffer(buffer) {
     const totalLen = kMinFrameLen + payloadLen;
     if (buffer.length < totalLen) return null;
     const chunk = buffer.subarray(0, totalLen);
-    const parsed = decodeTransferChunkFrame(chunk);
+    const parsed = decodeUartFrame(chunk);
     if (!parsed.ok) {
       const errorFrame = { kind: 'bin_error', error: parsed.error };
+      if (Number.isInteger(parsed.frameType)) {
+        errorFrame.frame_type = parsed.frameType;
+      }
       if (Number.isInteger(parsed.transferId)) {
         errorFrame.transfer_id = formatTransferId(parsed.transferId);
       }
@@ -133,7 +206,25 @@ export function tryExtractFrameFromBuffer(buffer) {
       }
       return {
         frame: errorFrame,
-        consumed: 1
+        consumed: totalLen
+      };
+    }
+    if (parsed.frameType === kFrameTypeControlJson) {
+      return {
+        frame: {
+          kind: 'ctrl',
+          msg: parsed.msg
+        },
+        consumed: totalLen
+      };
+    }
+    if (parsed.frameType === kFrameTypeLogText) {
+      return {
+        frame: {
+          kind: 'log',
+          msg: parsed.text
+        },
+        consumed: totalLen
       };
     }
     return {

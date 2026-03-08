@@ -1,12 +1,10 @@
 # Protocol (Current, March 2026)
 
 ## Overview
-- UART transport is a mixed stream:
-  - JSON lines (`\n` delimited) for control and logs.
-  - Binary transfer frames for screenshot chunk payloads.
-- Firmware emits multiplexed JSON control/log frames:
-  - `{"ch":"ctrl","msg":{...}}`
-  - `{"ch":"log","msg":"..."}`
+- UART transport is a framed binary stream (single abstraction):
+  - Transfer chunk frames (`frame_type=0x01`)
+  - Control JSON frames (`frame_type=0x02`)
+  - Log text frames (`frame_type=0x03`)
 - BLE bridge remains command/event JSON for control, plus raw binary chunk writes for screenshot payload.
 
 ## Core Commands
@@ -33,15 +31,15 @@
 - `desktop_delay_ms` (int, desktop source; milliseconds to wait after permission before frame capture)
 - `encoding` (`bin` only)
 
-## Core Responses
+## Core Responses (payloads inside framed control/log packets)
 ```json
-{"ch":"ctrl","msg":{"type":"state","busy":false}}
-{"ch":"ctrl","msg":{"type":"fw.version","version":"dev","built_at":"..."}}
-{"ch":"ctrl","msg":{"type":"dom.snapshot","request_id":"req-1","summary":{...}}}
-{"ch":"ctrl","msg":{"type":"tabs.list","request_id":"req-2","tabs":[...]}}
-{"ch":"ctrl","msg":{"type":"dom.snapshot.error","request_id":"req-1","error":"..."}}
-{"ch":"ctrl","msg":{"type":"tabs.list.error","request_id":"req-2","error":"..."}}
-{"ch":"ctrl","msg":{"ok":true}}
+{"type":"state","busy":false}
+{"type":"fw.version","version":"dev","built_at":"..."}
+{"type":"dom.snapshot","request_id":"req-1","summary":{...}}
+{"type":"tabs.list","request_id":"req-2","tabs":[...]}
+{"type":"dom.snapshot.error","request_id":"req-1","error":"..."}
+{"type":"tabs.list.error","request_id":"req-2","error":"..."}
+{"ok":true}
 ```
 
 ## Screenshot Transfer Protocol (Binary-Only)
@@ -67,15 +65,22 @@ MCP control responses:
 {"type":"transfer.error","request_id":"req-3","transfer_id":"tx_12ab34cd","code":"no_such_transfer"}
 ```
 
-### Binary chunk frame (extension -> firmware -> MCP)
-Each chunk is sent as a binary frame:
+### UART framed packet format (firmware -> MCP)
+Each UART packet is sent as:
 
 - `magic0` (1 byte): `0x41` (`'A'`)
 - `magic1` (1 byte): `0x4B` (`'K'`)
 - `version` (1 byte): `0x01`
-- `frame_type` (1 byte): `0x01` (transfer chunk)
-- `transfer_id` (4 bytes, LE, uint32)
-- `seq` (4 bytes, LE, uint32)
+- `frame_type` (1 byte):
+  - `0x01` transfer chunk
+  - `0x02` control JSON
+  - `0x03` log text
+- `transfer_id_or_reserved` (4 bytes, LE, uint32)
+  - transfer chunk: numeric transfer id
+  - control/log: `0`
+- `seq_or_reserved` (4 bytes, LE, uint32)
+  - transfer chunk: chunk sequence
+  - control/log: `0`
 - `payload_len` (2 bytes, LE, uint16)
 - `payload` (`payload_len` bytes)
 - `crc32` (4 bytes, LE, uint32)
@@ -86,7 +91,7 @@ CRC scope:
 
 Receiver behavior:
 - Reject frame on bad magic/version/type/length/CRC.
-- On reject with known `transfer_id` and `seq`, MCP sends `transfer.nack`.
+- For transfer chunk decode errors with known `transfer_id` + `seq`, MCP sends `transfer.nack`.
 - Extension retransmits the specific `seq` on `transfer.nack`.
 
 ## MCP Tool Contract

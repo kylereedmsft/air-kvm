@@ -352,3 +352,11 @@
   - Project direction explicitly prefers fail-fast over fallback/recovery for transport init.
   - `TransportMux::Begin()` now calls `abort()` if `xQueueCreate(...)` fails on ESP32.
   - Intent: avoid hidden degraded modes and keep runtime behavior deterministic/single-path.
+- UART stream abstraction rollout (March 8, 2026):
+  - Firmware now emits control and log over framed UART packets (same `AK` binary envelope as transfer chunks):
+    - `frame_type=0x02` control JSON payload
+    - `frame_type=0x03` log text payload
+    - transfer chunks remain `frame_type=0x01`
+  - MCP binary frame decoder now supports all three frame types and yields `ctrl`/`log`/`bin` frames directly.
+  - CRC/frame decode failures now consume full frame length once header+length are available, reducing parser desync risk.
+  - MCP UART ingest is now framed-stream first and does not rely on JSONL parsing for device responses.

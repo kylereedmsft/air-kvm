@@ -116,3 +116,12 @@ Read all the "docs/*.md" so you understand the goals of the project.
 - Policy clarified: fail-fast is mandatory; no recovery/fallback branches for core transport init failures.
 - Firmware transport TX queue init now fails hard (`abort()`) if queue allocation fails.
 - Rationale: deterministic behavior over hidden degraded modes; reduce state-space and debugging ambiguity.
+
+## March 8, 2026 - UART Stream Abstraction
+- Implemented framed UART output for firmware control/log traffic.
+- Frame types:
+  - `0x01` transfer chunk
+  - `0x02` control JSON
+  - `0x03` log text
+- MCP decoder updated to parse all frame types directly from one stream abstraction.
+- Legacy JSONL parsing remains temporarily in MCP for compatibility during migration.

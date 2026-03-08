@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UartTransport } from '../src/uart.js';
+import { encodeControlFrame, encodeLogFrame } from '../src/binary_frame.js';
 
 function makeTestTransport(commandTimeoutMs = 100) {
   const transport = new UartTransport({
@@ -28,7 +29,21 @@ test('sendCommand resolves when ctrl ack is received', async () => {
   const pending = transport.sendCommand({ type: 'state.request' });
 
   setTimeout(() => {
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"ok":true}}\n', 'utf8'));
+    transport.onData(encodeControlFrame({ ok: true }));
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.msg, { ok: true });
+  transport.close();
+});
+
+test('sendCommand resolves when framed ctrl ack is received', async () => {
+  const transport = makeTestTransport(200);
+  const pending = transport.sendCommand({ type: 'state.request' });
+
+  setTimeout(() => {
+    transport.onData(encodeControlFrame({ ok: true }));
   }, 10);
 
   const result = await pending;
@@ -42,7 +57,7 @@ test('sendCommand resolves state.request when state frame arrives before ack', a
   const pending = transport.sendCommand({ type: 'state.request' });
 
   setTimeout(() => {
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"type":"state","busy":false}}\n', 'utf8'));
+    transport.onData(encodeControlFrame({ type: 'state', busy: false }));
   }, 10);
 
   const result = await pending;
@@ -74,14 +89,47 @@ test('sendCommand with collector ignores generic ack and resolves on matching pa
   );
 
   setTimeout(() => {
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"ok":true}}\n', 'utf8'));
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"type":"dom.snapshot","request_id":"req-test-1","summary":{"title":"x"}}}\n', 'utf8'));
+    transport.onData(encodeControlFrame({ ok: true }));
+    transport.onData(encodeControlFrame({
+      type: 'dom.snapshot',
+      request_id: 'req-test-1',
+      summary: { title: 'x' }
+    }));
   }, 10);
 
   const result = await pending;
   assert.equal(result.ok, true);
   assert.equal(result.data.request_id, requestId);
   assert.equal(result.data.snapshot.type, 'dom.snapshot');
+  transport.close();
+});
+
+test('sendCommand ignores framed log and resolves on framed ctrl payload', async () => {
+  const transport = makeTestTransport(200);
+  const requestId = 'req-framed-1';
+  const pending = transport.sendCommand(
+    { type: 'dom.snapshot.request', request_id: requestId },
+    (msg) => {
+      if (msg.type === 'dom.snapshot' && msg.request_id === requestId) {
+        return { done: true, ok: true, data: { request_id: requestId, snapshot: msg } };
+      }
+      return null;
+    }
+  );
+
+  setTimeout(() => {
+    transport.onData(encodeLogFrame('rx.ble something'));
+    transport.onData(encodeControlFrame({
+      type: 'dom.snapshot',
+      request_id: 'req-framed-1',
+      summary: { title: 'framed' }
+    }));
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.data.request_id, requestId);
+  assert.equal(result.data.snapshot.summary.title, 'framed');
   transport.close();
 });
 
@@ -123,8 +171,18 @@ test('sendCommand forwards collector outbound commands and completes', async () 
   );
 
   setTimeout(() => {
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"type":"transfer.chunk","request_id":"r-out","transfer_id":"tx-1","seq":0,"data":"AAA"}}\n', 'utf8'));
-    transport.onData(Buffer.from('{"ch":"ctrl","msg":{"type":"transfer.done","request_id":"r-out","transfer_id":"tx-1"}}\n', 'utf8'));
+    transport.onData(encodeControlFrame({
+      type: 'transfer.chunk',
+      request_id: 'r-out',
+      transfer_id: 'tx-1',
+      seq: 0,
+      data: 'AAA'
+    }));
+    transport.onData(encodeControlFrame({
+      type: 'transfer.done',
+      request_id: 'r-out',
+      transfer_id: 'tx-1'
+    }));
   }, 10);
 
   const result = await pending;
