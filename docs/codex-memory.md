@@ -308,7 +308,13 @@
     - `cd mcp && node --test` pass
 - ACK pacing correction (March 8, 2026, late follow-up):
   - Investigator finding: MCP ACK stride gating could create apparent sender stalls during windowed transfer when contiguous progress did not cross stride quickly.
-  - Fix: MCP screenshot collector now emits `transfer.ack` on every contiguous advance (no stride threshold).
-  - Result: extension sender receives credit updates promptly under ACK-window flow control.
+  - Finalized fix (deterministic without per-frame ACK spam):
+    - restore ACK stride gating (`kAckStride = 8`)
+    - add immediate gap detection: when out-of-order chunk arrives and first missing seq is known, emit `transfer.nack` (`reason: "missing_chunk"`) immediately.
+  - Result: sender gets fast loss recovery signal without requiring timeout or per-frame ACK chatter.
+  - Observability upgrade:
+    - MCP UART debug now logs every collector outbound control command as:
+      - `collector outbound={...}`
+    - This includes `transfer.ack`, `transfer.nack`, `transfer.resume`, `transfer.done.ack`, enabling exact request/transfer/seq traceability.
   - Validation:
-    - `cd mcp && node --test` pass (updated `tooling.test.js` to expect earlier ACK).
+    - `cd mcp && node --test` pass.

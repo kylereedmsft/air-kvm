@@ -159,6 +159,7 @@ export class UartTransport {
         const queueCollectorCommands = (commands) => {
           if (!Array.isArray(commands) || commands.length === 0) return;
           for (const outbound of commands) {
+            this.log(`collector outbound=${JSON.stringify(outbound)}`);
             controlWriteQueue = controlWriteQueue
               .then(() => writeRawCommand(outbound))
               .catch((err) => {

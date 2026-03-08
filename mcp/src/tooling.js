@@ -209,9 +209,11 @@ export function createResponseCollector(name, command) {
     let transferId = null;
     let highestContiguousSeq = -1;
     let lastAckSeq = -1;
+    let pendingGapNackSeq = null;
     let timeoutRetries = 0;
     let sawTransferDone = false;
     const kMaxTimeoutRetries = 3;
+    const kAckStride = 8;
     const maxRawBytes = Math.floor((maxChars * 3) / 4);
 
     function computeHighestContiguousSeq() {
@@ -226,6 +228,7 @@ export function createResponseCollector(name, command) {
       if (!transferId) return null;
       highestContiguousSeq = computeHighestContiguousSeq();
       if (!force && highestContiguousSeq < 0) return null;
+      if (!force && highestContiguousSeq - lastAckSeq < kAckStride) return null;
       if (highestContiguousSeq === lastAckSeq) return null;
       lastAckSeq = highestContiguousSeq;
       return {
@@ -261,6 +264,7 @@ export function createResponseCollector(name, command) {
 
         const seq = frame.seq;
         const bytes = frame.payload;
+        const beforeHighest = computeHighestContiguousSeq();
         if (!chunksBySeq.has(seq)) {
           receivedBytes += bytes.length;
         }
@@ -277,10 +281,30 @@ export function createResponseCollector(name, command) {
           };
         }
         chunksBySeq.set(seq, bytes);
+        const afterHighest = computeHighestContiguousSeq();
+        const outbound = [];
+        if (pendingGapNackSeq !== null && chunksBySeq.has(pendingGapNackSeq)) {
+          pendingGapNackSeq = null;
+        }
+        if (seq > beforeHighest + 1) {
+          const missingSeq = beforeHighest + 1;
+          if (!chunksBySeq.has(missingSeq) && pendingGapNackSeq !== missingSeq) {
+            pendingGapNackSeq = missingSeq;
+            outbound.push({
+              type: 'transfer.nack',
+              request_id: requestId,
+              transfer_id: transferId,
+              seq: missingSeq,
+              reason: 'missing_chunk'
+            });
+          }
+        }
+        highestContiguousSeq = afterHighest;
         const ack = maybeAck(false);
         if (ack) {
-          return { done: false, outbound: [ack], extendTimeoutMs: 7000 };
+          outbound.push(ack);
         }
+        if (outbound.length > 0) return { done: false, outbound, extendTimeoutMs: 7000 };
         return null;
       }
 

@@ -90,23 +90,24 @@ test('binary screenshot collector reassembles transfer and emits done ack', () =
     total_bytes: 6
   }, { kind: 'ctrl' }, []), null);
 
+  const gapNack = collect(
+    null,
+    { kind: 'bin', transfer_id: transferId, seq: 1, payload: Buffer.from('DEF') },
+    []
+  );
+  assert.equal(gapNack.done, false);
+  assert.equal(Array.isArray(gapNack.outbound), true);
+  assert.equal(gapNack.outbound[0].type, 'transfer.nack');
+  assert.equal(gapNack.outbound[0].seq, 0);
+
   assert.equal(
     collect(
       null,
-      { kind: 'bin', transfer_id: transferId, seq: 1, payload: Buffer.from('DEF') },
+      { kind: 'bin', transfer_id: transferId, seq: 0, payload: Buffer.from('ABC') },
       []
     ),
     null
   );
-  const ack = collect(
-    null,
-    { kind: 'bin', transfer_id: transferId, seq: 0, payload: Buffer.from('ABC') },
-    []
-  );
-  assert.equal(ack.done, false);
-  assert.equal(Array.isArray(ack.outbound), true);
-  assert.equal(ack.outbound[0].type, 'transfer.ack');
-  assert.equal(ack.outbound[0].highest_contiguous_seq, 1);
 
   const done = collect({
     type: 'transfer.done',
