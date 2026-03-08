@@ -203,3 +203,7 @@
     - active in-memory transfer IDs
     - last persisted breadcrumb snapshot.
   - Bridge page now logs `ble.sw.alive` and detects SW instance changes.
+- Team workflow update (March 7, 2026, late night):
+  - Added `INVESTIGATOR` role as mandatory for unclear failures.
+  - Investigator gate requires evidence-first root-cause analysis (logs/traces/code-path proof/disproof), not speculative explanations.
+  - Persisted in `manager_plan.md` and `notes.md` so future runs enforce root-cause accountability.

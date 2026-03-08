@@ -4,6 +4,7 @@
 - `MANAGER`: creates/updates plan, assigns one step at a time, verifies completion.
 - `WORKER`: executes exactly one approved step and reports concrete diffs/commands.
 - `REVIEWER` (new, mandatory before every commit): performs an adversarial review focused on bugs, regressions, unsafe assumptions, missing tests, and cross-platform risks.
+- `INVESTIGATOR` (mandatory for unresolved failures): drives root-cause analysis with evidence, not guesses.
 
 ### REVIEWER Gate (must pass before commit)
 1. Validate behavior changes against current requirements and architecture docs.
@@ -12,6 +13,16 @@
 4. Verify tests exist for new behavior; if missing, block commit until added or risk explicitly documented.
 5. Produce findings with severity (`critical/high/medium/low`) and required fixes.
 6. `MANAGER` approves commit only after all `critical/high` findings are fixed or explicitly waived.
+
+### INVESTIGATOR Gate (mandatory when failures are unclear)
+1. Define concrete hypotheses and required evidence for each.
+2. Collect proof using logs, traces, code-path inspection, and reproducible commands.
+3. Eliminate alternatives with explicit disproof, not intuition.
+4. Report root cause with:
+   - where it fails (file/function/stage),
+   - why it fails,
+   - why competing explanations are wrong.
+5. No closure until open questions are reduced to zero or explicitly listed as blocked by missing observability.
 
 ## Objective
 Stabilize screenshot transfer reliability end-to-end by upgrading from fire-and-forget chunks to resumable transfer sessions (`transfer_id` + ACK/resume/cancel/reset).
