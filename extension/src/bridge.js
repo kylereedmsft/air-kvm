@@ -272,25 +272,26 @@ export async function postEvent(payload, deps = {}) {
     if (!connected || !rxCharacteristic) return false;
     const line = `${JSON.stringify(payload)}\n`;
     const bytes = encoder.encode(line);
+    const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
     debugLog('tx', {
       traceId,
       type: payload?.type || 'unknown',
       bytes: bytes.length,
-      mode: supportsWithResponse ? 'withResponse' : 'withoutResponse'
+      mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
     });
-    if (supportsWithResponse) {
+    if (supportsWithoutResponse) {
       try {
-        await rxCharacteristic.writeValueWithResponse(bytes);
+        await rxCharacteristic.writeValueWithoutResponse(bytes);
         return true;
       } catch (err) {
-        debugLog('tx withResponse failed, falling back', {
+        debugLog('tx withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
       }
     }
-    await rxCharacteristic.writeValueWithoutResponse(bytes);
+    await rxCharacteristic.writeValueWithResponse(bytes);
     return true;
   } catch {
     debugLog('postEvent failed', { traceId, type: payload?.type || 'unknown' });
@@ -304,24 +305,25 @@ export async function postBinary(bytes, deps = {}) {
     const connected = await ensureConnected(deps);
     if (!connected || !rxCharacteristic) return false;
     if (!(bytes instanceof Uint8Array)) return false;
+    const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
     debugLog('tx binary', {
       traceId,
       bytes: bytes.length,
-      mode: supportsWithResponse ? 'withResponse' : 'withoutResponse'
+      mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
     });
-    if (supportsWithResponse) {
+    if (supportsWithoutResponse) {
       try {
-        await rxCharacteristic.writeValueWithResponse(bytes);
+        await rxCharacteristic.writeValueWithoutResponse(bytes);
         return true;
       } catch (err) {
-        debugLog('tx binary withResponse failed, falling back', {
+        debugLog('tx binary withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
       }
     }
-    await rxCharacteristic.writeValueWithoutResponse(bytes);
+    await rxCharacteristic.writeValueWithResponse(bytes);
     return true;
   } catch {
     debugLog('postBinary failed', { traceId });

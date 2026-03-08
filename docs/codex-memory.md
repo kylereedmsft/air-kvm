@@ -253,6 +253,13 @@
     - `cd extension && node --test` pass
     - `cd firmware && pio test -e native` pass
     - `cd firmware && pio run -e esp32dev` pass
+- BLE write-mode stability finding (March 8, 2026, field log):
+  - Observed connect/handshake failure at first control write:
+    - `writeValueWithResponse` failed with "GATT operation failed for unknown reason"
+    - immediate `gattserverdisconnected`.
+  - Mitigation applied:
+    - extension BLE write path now prefers `writeValueWithoutResponse` first
+    - falls back to `writeValueWithResponse` only if needed.
 - UART noise reduction (March 7, 2026, investigator action):
   - Stopped mirroring BLE ingress payload logs (`rx.ble ...`) to UART in `CommandRouter::ProcessLine`.
   - Rationale: BLE command echo on UART created heavy log noise and increased risk of framing interleaving/parse confusion during screenshot transfers.
