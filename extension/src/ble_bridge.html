@@ -22,8 +22,7 @@
         margin-top: 12px;
         border: 1px solid #d0d0d0;
         border-radius: 6px;
-        padding: 8px;
-        background: #fafafa;
+        background: #f7f7f7;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
         line-height: 1.35;
@@ -32,7 +31,17 @@
         max-height: 75vh;
         resize: vertical;
         overflow: auto;
+      }
+      .log-row {
+        padding: 4px 8px;
         white-space: pre-wrap;
+        word-break: break-word;
+      }
+      .log-row:nth-child(odd) {
+        background: #fcfcfc;
+      }
+      .log-row:nth-child(even) {
+        background: #f1f3f4;
       }
       #log-controls {
         margin-top: 10px;

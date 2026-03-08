@@ -51,10 +51,20 @@ function appendLog(line) {
   const wasNearBottom =
     logEl.scrollTop + logEl.clientHeight >= (logEl.scrollHeight - kAutoScrollThresholdPx);
   logLines.push(line);
+  const row = document.createElement('div');
+  row.className = 'log-row';
+  row.textContent = line;
+  logEl.appendChild(row);
+
   if (logLines.length > kMaxLogLines) {
-    logLines = logLines.slice(logLines.length - kMaxLogLines);
+    const overflow = logLines.length - kMaxLogLines;
+    logLines = logLines.slice(overflow);
+    for (let i = 0; i < overflow; i += 1) {
+      if (logEl.firstChild) {
+        logEl.removeChild(logEl.firstChild);
+      }
+    }
   }
-  logEl.textContent = logLines.join('\n');
   if (autoScrollEnabled && wasNearBottom) {
     logEl.scrollTop = logEl.scrollHeight;
   }
@@ -374,7 +384,7 @@ reconnectBtn?.addEventListener('click', async () => {
 
 clearLogBtn?.addEventListener('click', () => {
   logLines = [];
-  if (logEl) logEl.textContent = '';
+  if (logEl) logEl.replaceChildren();
 });
 
 toggleAutoscrollBtn?.addEventListener('click', () => {
