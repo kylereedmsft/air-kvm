@@ -29,3 +29,6 @@ firmware/host_test/host_test_bin
 
 # Local firmware host test binary
 firmware/host_test/host_test_bin
+
+# Testing output
+temp/
