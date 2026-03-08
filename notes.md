@@ -125,3 +125,8 @@ Read all the "docs/*.md" so you understand the goals of the project.
   - `0x03` log text
 - MCP decoder updated to parse all frame types directly from one stream abstraction.
 - Legacy JSONL parsing remains temporarily in MCP for compatibility during migration.
+
+## March 8, 2026 - BLE Picker Regression Fix
+- Device not appearing in BLE chooser traced to startup abort on TX queue allocation.
+- Queue item grew with framed transport; depth 128 was too heavy with fail-fast allocation.
+- Reduced TX queue depth to 12 to restore startup + advertising while keeping single-path TX design.

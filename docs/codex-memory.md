@@ -360,3 +360,6 @@
   - MCP binary frame decoder now supports all three frame types and yields `ctrl`/`log`/`bin` frames directly.
   - CRC/frame decode failures now consume full frame length once header+length are available, reducing parser desync risk.
   - MCP UART ingest is now framed-stream first and does not rely on JSONL parsing for device responses.
+  - Regression found immediately after rollout: device could fail to appear in BLE chooser.
+    - Cause: fail-fast queue init + large `TxFrame` size made queue allocation too heavy at depth 128.
+    - Fix: reduced TX queue depth to 12 to keep single-path behavior without startup allocation failure.
