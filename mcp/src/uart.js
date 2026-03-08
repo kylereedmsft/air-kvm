@@ -1,6 +1,10 @@
 import { SerialPort } from 'serialport';
 import { tryExtractFrameFromBuffer } from './binary_frame.js';
 
+function startsWithBinaryMagic(buffer) {
+  return buffer.length >= 2 && buffer[0] === 0x41 && buffer[1] === 0x4b;
+}
+
 export function parseDeviceLine(line) {
   let parsed;
   try {
@@ -108,6 +112,12 @@ export class UartTransport {
           this.currentWaiter.onFrame(frame);
         }
         continue;
+      }
+
+      // If this starts like a binary frame but we do not have all bytes yet,
+      // do not split on newline bytes that may exist inside payload.
+      if (startsWithBinaryMagic(this.readBuffer)) {
+        break;
       }
 
       const newline = this.readBuffer.indexOf(0x0a);
