@@ -21,7 +21,7 @@ Status: In progress
 2. [x] Introduce shared screenshot contract constants (MCP + extension).
 3. [x] Consolidate duplicated bridge log formatting helpers.
 4. [x] Refactor service worker command handling to dispatch map + shared error wrapper.
-5. [ ] Add service-worker-specific tests (dispatch + transfer lifecycle + bridge error paths).
+5. [x] Add service-worker-specific tests (dispatch + transfer lifecycle + bridge error paths).
 6. [x] Run focused live validation sweep after cleanup (open tab -> bytebeat navigation -> play click -> tab screenshot save).
 
 ## Backlog (Option 3 Major Consolidation)
