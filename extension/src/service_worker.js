@@ -2,8 +2,10 @@ import { dataUrlToMetaAndChunks, resolveScreenshotConfig } from './screenshot_pr
 const kBleBridgePagePath = 'src/ble_bridge.html';
 const kDebug = true;
 const kScreenshotCaptureTimeoutMs = 25000;
+const kScreenshotStageTimeoutMs = 10000;
 let lastAutomationTabId = null;
 let bridgeTraceSeq = 0;
+let screenshotInFlight = false;
 
 function debugLog(...args) {
   if (!kDebug) return;
@@ -142,12 +144,13 @@ function makeRequestId() {
 }
 
 function withTimeout(promise, ms, errorCode) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => {
-      setTimeout(() => reject(new Error(errorCode)), ms);
-    })
-  ]);
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(errorCode)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => {
+    if (timeoutId !== null) clearTimeout(timeoutId);
+  });
 }
 
 async function captureTabPng(config) {
@@ -240,10 +243,14 @@ async function encodeBitmapToJpegDataUrl(bitmap, config) {
 }
 
 async function compressDataUrlToJpeg(dataUrl, config) {
-  const response = await fetch(dataUrl);
-  const blob = await response.blob();
-  const bitmap = await createImageBitmap(blob);
-  return encodeBitmapToJpegDataUrl(bitmap, config);
+  const response = await withTimeout(fetch(dataUrl), kScreenshotStageTimeoutMs, 'screenshot_fetch_timeout');
+  const blob = await withTimeout(response.blob(), kScreenshotStageTimeoutMs, 'screenshot_blob_timeout');
+  const bitmap = await withTimeout(createImageBitmap(blob), kScreenshotStageTimeoutMs, 'screenshot_bitmap_timeout');
+  return withTimeout(
+    encodeBitmapToJpegDataUrl(bitmap, config),
+    kScreenshotStageTimeoutMs,
+    'screenshot_encode_timeout'
+  );
 }
 
 async function sendDomSnapshot(command) {
@@ -272,58 +279,66 @@ async function sendDomSnapshot(command) {
 }
 
 async function sendScreenshot(command) {
+  if (screenshotInFlight) {
+    throw new Error('screenshot_busy');
+  }
+  screenshotInFlight = true;
   debugLog('sendScreenshot start', command);
-  const source = command.source === 'desktop' ? 'desktop' : 'tab';
-  const requestId = command.request_id || makeRequestId();
-  const config = resolveScreenshotConfig(command);
-  config.tabId = Number.isInteger(command?.tab_id) ? command.tab_id : null;
-  debugLog('sendScreenshot capture begin', {
-    source,
-    requestId,
-    tabId: config.tabId || null,
-    encodingRequested: config.encoding
-  });
-  const encoded = await withTimeout(
-    source === 'desktop' ? captureDesktopPng(config) : captureTabPng(config),
-    kScreenshotCaptureTimeoutMs,
-    'screenshot_capture_timeout'
-  );
-  debugLog('sendScreenshot capture done', {
-    source,
-    requestId,
-    encodedWidth: encoded.encodedWidth,
-    encodedHeight: encoded.encodedHeight,
-    encodedQuality: encoded.encodedQuality
-  });
-  const compression = config.encoding === 'b64z'
-    ? await tryGzipDataUrlBase64(encoded.dataUrl)
-    : { encoding: 'b64', payloadBase64: null };
-  debugLog('sendScreenshot compression', {
-    source,
-    requestId,
-    requested: config.encoding,
-    selected: compression.encoding
-  });
-  const { meta, chunks } = dataUrlToMetaAndChunks(
-    encoded.dataUrl,
-    requestId,
-    source,
-    encoded,
-    120,
-    compression.encoding,
-    compression.payloadBase64
-  );
-  debugLog('sendScreenshot encoded', {
-    source,
-    requestId,
-    encoding: compression.encoding,
-    chunks: chunks.length,
-    totalChars: meta.tch
-  });
-  await postEventViaBridge(meta);
-  for (const chunk of chunks) {
-    // BLE payloads are chunked to reduce risk of exceeding negotiated MTU.
-    await postEventViaBridge(chunk);
+  try {
+    const source = command.source === 'desktop' ? 'desktop' : 'tab';
+    const requestId = command.request_id || makeRequestId();
+    const config = resolveScreenshotConfig(command);
+    config.tabId = Number.isInteger(command?.tab_id) ? command.tab_id : null;
+    debugLog('sendScreenshot capture begin', {
+      source,
+      requestId,
+      tabId: config.tabId || null,
+      encodingRequested: config.encoding
+    });
+    const encoded = await withTimeout(
+      source === 'desktop' ? captureDesktopPng(config) : captureTabPng(config),
+      kScreenshotCaptureTimeoutMs,
+      'screenshot_capture_timeout'
+    );
+    debugLog('sendScreenshot capture done', {
+      source,
+      requestId,
+      encodedWidth: encoded.encodedWidth,
+      encodedHeight: encoded.encodedHeight,
+      encodedQuality: encoded.encodedQuality
+    });
+    const compression = config.encoding === 'b64z'
+      ? await tryGzipDataUrlBase64(encoded.dataUrl)
+      : { encoding: 'b64', payloadBase64: null };
+    debugLog('sendScreenshot compression', {
+      source,
+      requestId,
+      requested: config.encoding,
+      selected: compression.encoding
+    });
+    const { meta, chunks } = dataUrlToMetaAndChunks(
+      encoded.dataUrl,
+      requestId,
+      source,
+      encoded,
+      120,
+      compression.encoding,
+      compression.payloadBase64
+    );
+    debugLog('sendScreenshot encoded', {
+      source,
+      requestId,
+      encoding: compression.encoding,
+      chunks: chunks.length,
+      totalChars: meta.tch
+    });
+    await postEventViaBridge(meta);
+    for (const chunk of chunks) {
+      // BLE payloads are chunked to reduce risk of exceeding negotiated MTU.
+      await postEventViaBridge(chunk);
+    }
+  } finally {
+    screenshotInFlight = false;
   }
 }
 

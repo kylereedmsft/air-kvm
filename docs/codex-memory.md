@@ -153,3 +153,13 @@
   - Added stage logs in `sendScreenshot`: `capture begin`, `capture done`, and `compression` selection.
   - Added explicit ignore logging for non-command BLE payloads (for example `{ "ok": true }`) in `handleBleCommand` to reduce false-positive debugging paths.
   - Verification: `cd extension && node --test` and `cd mcp && node --test test/server.test.js test/tools.test.js` both pass after changes.
+- Screenshot resiliency hardening (March 7, 2026, follow-up):
+  - Added global in-flight screenshot guard in service worker; concurrent screenshot requests now fail fast with `screenshot_busy`.
+  - `withTimeout` now clears internal timers via `finally` to avoid timeout handle buildup.
+  - Added per-stage screenshot timeouts in JPEG pipeline:
+    - `screenshot_fetch_timeout`
+    - `screenshot_blob_timeout`
+    - `screenshot_bitmap_timeout`
+    - `screenshot_encode_timeout`
+  - Goal: convert silent/long hangs into explicit error frames and prevent request pileups.
+  - Verification: `cd extension && node --test`; `cd mcp && node --test test/server.test.js test/tools.test.js` both pass.
