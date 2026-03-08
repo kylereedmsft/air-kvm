@@ -340,3 +340,11 @@
   - MCP tooling now accepts/passes `desktop_delay_ms` for `airkvm_screenshot_desktop`.
   - Extension service worker forwards delay hint to bridge capture route.
   - Bridge applies bounded wait (`0..5000ms`) after permission grant and before `ImageCapture.grabFrame()`.
+- UART determinism correction (March 8, 2026):
+  - Root cause review found ESP32 TX fallback in `TransportMux::EnqueueFrame`:
+    - queue send timeout could call `EmitFrameDirect(...)` from producer context.
+    - this violated single-writer intent and could interleave with TX task output.
+  - Fixed by removing ESP32 direct-write fallback entirely:
+    - ESP32 path now always enqueues to TX task (`xQueueSend(..., portMAX_DELAY)`).
+    - non-ESP32 host path still emits directly.
+  - Outcome: one deterministic UART writer path on ESP32, reduced framing corruption risk.

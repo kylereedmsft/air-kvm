@@ -109,13 +109,17 @@ void TransportMux::EmitState(const DeviceState& state) {
 
 void TransportMux::EnqueueFrame(const TxFrame& frame) {
 #if defined(ESP32)
-  if (tx_queue_ != nullptr) {
-    const auto queue = reinterpret_cast<QueueHandle_t>(tx_queue_);
-    const auto sent = xQueueSend(queue, &frame, pdMS_TO_TICKS(200));
-    if (sent == pdTRUE) return;
+  if (tx_queue_ == nullptr) {
+    return;
   }
-#endif
+  const auto queue = reinterpret_cast<QueueHandle_t>(tx_queue_);
+  // Single deterministic UART TX path on ESP32: always enqueue for TX task.
+  // No direct-write fallback from producer contexts.
+  xQueueSend(queue, &frame, portMAX_DELAY);
+  return;
+#else
   EmitFrameDirect(frame);
+#endif
 }
 
 void TransportMux::EmitFrameDirect(const TxFrame& frame) {
