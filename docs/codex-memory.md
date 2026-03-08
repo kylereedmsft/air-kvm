@@ -260,6 +260,13 @@
   - Mitigation applied:
     - extension BLE write path now prefers `writeValueWithoutResponse` first
     - falls back to `writeValueWithResponse` only if needed.
+- Deterministic first-command disconnect mitigation (March 8, 2026):
+  - Hypothesis confirmed by timing: disconnect occurs immediately after first command write, before response is observed.
+  - Firmware fix:
+    - BLE write callback no longer parses/handles commands directly.
+    - Callback now enqueues raw BLE writes to a bounded FreeRTOS queue.
+    - Main loop drains queue and performs command parsing + response emission in normal app context.
+  - Goal: remove protocol/notify work from BLE callback context to avoid stack-context disconnects.
 - UART noise reduction (March 7, 2026, investigator action):
   - Stopped mirroring BLE ingress payload logs (`rx.ble ...`) to UART in `CommandRouter::ProcessLine`.
   - Rationale: BLE command echo on UART created heavy log noise and increased risk of framing interleaving/parse confusion during screenshot transfers.

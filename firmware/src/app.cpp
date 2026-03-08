@@ -1,6 +1,10 @@
 #include "app.hpp"
 
 #include <cstring>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#endif
 
 namespace {
 constexpr const char* kDeviceName = "air-kvm-ctrl-cb01";
@@ -47,6 +51,11 @@ void AirKvmApp::Setup() {
   Serial.begin(115200);
   delay(200);
   transport_.Begin();
+#if defined(ESP32)
+  if (ble_rx_queue_ == nullptr) {
+    ble_rx_queue_ = xQueueCreate(kBleRxQueueDepth, sizeof(BleRxItem));
+  }
+#endif
 
   NimBLEDevice::init(kDeviceName);
   NimBLEServer* server = NimBLEDevice::createServer();
@@ -74,6 +83,9 @@ void AirKvmApp::Setup() {
 }
 
 void AirKvmApp::Loop() {
+#if defined(ESP32)
+  DrainBleRxQueue();
+#endif
   const String line = uart_reader_.PollLine();
   if (line.length() == 0) {
     delay(5);
@@ -83,6 +95,23 @@ void AirKvmApp::Loop() {
 }
 
 void AirKvmApp::OnBleWrite(const std::string& value) {
+  if (value.empty()) return;
+#if defined(ESP32)
+  if (ble_rx_queue_ != nullptr) {
+    BleRxItem item{};
+    if (value.size() > kMaxBleWriteLen) {
+      return;
+    }
+    item.len = value.size();
+    std::memcpy(item.data, value.data(), item.len);
+    xQueueSend(ble_rx_queue_, &item, 0);
+    return;
+  }
+#endif
+  ProcessBleWrite(value);
+}
+
+void AirKvmApp::ProcessBleWrite(const std::string& value) {
   if (value.empty()) return;
   if (IsBinaryTransferFrame(value)) {
     transport_.EmitBinaryFrame(
@@ -108,6 +137,17 @@ void AirKvmApp::OnBleWrite(const std::string& value) {
     ble_buffer_ = "";
   }
 }
+
+#if defined(ESP32)
+void AirKvmApp::DrainBleRxQueue() {
+  if (ble_rx_queue_ == nullptr) return;
+  BleRxItem item{};
+  while (xQueueReceive(ble_rx_queue_, &item, 0) == pdTRUE) {
+    if (item.len == 0 || item.len > kMaxBleWriteLen) continue;
+    ProcessBleWrite(std::string(reinterpret_cast<const char*>(item.data), item.len));
+  }
+}
+#endif
 
 AirKvmApp::RxCallbacks::RxCallbacks(AirKvmApp& app) : app_(app) {}
 

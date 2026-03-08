@@ -2,6 +2,10 @@
 
 #include <Arduino.h>
 #include <NimBLEDevice.h>
+#if defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
+#endif
 
 #include "command_router.hpp"
 #include "device_state.hpp"
@@ -19,6 +23,15 @@ class AirKvmApp {
   void Loop();
 
  private:
+  static constexpr size_t kMaxBleWriteLen = 512;
+#if defined(ESP32)
+  static constexpr size_t kBleRxQueueDepth = 32;
+  struct BleRxItem {
+    size_t len;
+    uint8_t data[kMaxBleWriteLen];
+  };
+#endif
+
   class RxCallbacks : public NimBLECharacteristicCallbacks {
    public:
     explicit RxCallbacks(AirKvmApp& app);
@@ -32,6 +45,11 @@ class AirKvmApp {
   AirKvmApp();
 
   void OnBleWrite(const std::string& value);
+  void ProcessBleWrite(const std::string& value);
+#if defined(ESP32)
+  void DrainBleRxQueue();
+  QueueHandle_t ble_rx_queue_{nullptr};
+#endif
 
   DeviceState state_;
   HidController hid_;
