@@ -1,6 +1,7 @@
 #include "transport_mux.hpp"
 
 #include <cstring>
+#include <string>
 
 #include <NimBLEDevice.h>
 
@@ -28,7 +29,10 @@ void TransportMux::EmitControl(const char* payload) {
   Serial.print(payload);
   Serial.println(kCtrlSuffix);
   if (tx_char_ != nullptr) {
-    tx_char_->setValue(reinterpret_cast<const uint8_t*>(payload), std::strlen(payload));
+    std::string ble_payload(payload);
+    ble_payload.push_back('\n');
+    tx_char_->setValue(
+        reinterpret_cast<const uint8_t*>(ble_payload.data()), ble_payload.size());
     tx_char_->notify();
   }
 }

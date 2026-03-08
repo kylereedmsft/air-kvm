@@ -76,6 +76,63 @@ export function setBleDebugLogger(logger) {
   debugLogger = typeof logger === 'function' ? logger : null;
 }
 
+function extractJsonObjects(input) {
+  const messages = [];
+  if (!input) return { messages, rest: '' };
+
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  let consumedUntil = 0;
+
+  for (let i = 0; i < input.length; i += 1) {
+    const ch = input[i];
+    if (start === -1) {
+      if (ch === '{') {
+        start = i;
+        depth = 1;
+        inString = false;
+        escape = false;
+      } else if (!/\s/.test(ch)) {
+        // Drop non-whitespace garbage before the next JSON object.
+        consumedUntil = i + 1;
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (escape) {
+        escape = false;
+      } else if (ch === '\\') {
+        escape = true;
+      } else if (ch === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') {
+      depth += 1;
+      continue;
+    }
+    if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        messages.push(input.slice(start, i + 1));
+        consumedUntil = i + 1;
+        start = -1;
+      }
+    }
+  }
+
+  return { messages, rest: input.slice(consumedUntil) };
+}
+
 function hasBluetooth(navigatorLike) {
   return Boolean(navigatorLike?.bluetooth?.requestDevice);
 }
@@ -245,30 +302,16 @@ function onBleBytes(text, onCommand) {
   if (!text || typeof text !== 'string') return;
   debugLog('rx bytes', { bytes: text.length, preview: text.slice(0, 160) });
   bleLineBuffer += text;
-  const lines = bleLineBuffer.split('\n');
-  bleLineBuffer = lines.pop() || '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
+  const { messages, rest } = extractJsonObjects(bleLineBuffer);
+  bleLineBuffer = rest;
+  for (const serialized of messages) {
     try {
-      const msg = JSON.parse(trimmed);
-      debugLog('rx line json', msg?.type || 'unknown');
+      const msg = JSON.parse(serialized);
+      debugLog('rx json', msg?.type || 'unknown');
       if (typeof onCommand === 'function') onCommand(msg);
     } catch {
-      // Ignore malformed device notifications.
+      // Ignore malformed objects.
     }
-  }
-
-  // Some BLE notifications carry one whole JSON object without a newline.
-  const tail = bleLineBuffer.trim();
-  if (!tail) return;
-  try {
-    const msg = JSON.parse(tail);
-    debugLog('rx tail json', msg?.type || 'unknown');
-    bleLineBuffer = '';
-    if (typeof onCommand === 'function') onCommand(msg);
-  } catch {
-    // Keep buffering when payload appears partial.
   }
 }
 

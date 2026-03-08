@@ -53,6 +53,24 @@ export function validateAgentCommand(msg) {
       return { ok: true };
     case 'tabs.list.request':
       return { ok: true };
+    case 'transfer.reset':
+      return { ok: true };
+    case 'transfer.cancel':
+      return typeof msg.transfer_id === 'string'
+        ? { ok: true }
+        : { ok: false, error: 'invalid_transfer_control' };
+    case 'transfer.resume':
+      return (typeof msg.transfer_id === 'string' && Number.isInteger(msg.from_seq))
+        ? { ok: true }
+        : { ok: false, error: 'invalid_transfer_control' };
+    case 'transfer.ack':
+      return (typeof msg.transfer_id === 'string' && Number.isInteger(msg.highest_contiguous_seq))
+        ? { ok: true }
+        : { ok: false, error: 'invalid_transfer_control' };
+    case 'transfer.done.ack':
+      return typeof msg.transfer_id === 'string'
+        ? { ok: true }
+        : { ok: false, error: 'invalid_transfer_control' };
     default:
       return { ok: false, error: 'unknown_type' };
   }
