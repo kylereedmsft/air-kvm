@@ -44,6 +44,9 @@ export function validateAgentCommand(msg) {
       if (typeof msg.max_chars !== 'undefined' && !Number.isInteger(msg.max_chars)) {
         return { ok: false, error: 'invalid_screenshot_request' };
       }
+      if (typeof msg.desktop_delay_ms !== 'undefined' && !Number.isInteger(msg.desktop_delay_ms)) {
+        return { ok: false, error: 'invalid_screenshot_request' };
+      }
       if (typeof msg.quality !== 'undefined' && typeof msg.quality !== 'number') {
         return { ok: false, error: 'invalid_screenshot_request' };
       }

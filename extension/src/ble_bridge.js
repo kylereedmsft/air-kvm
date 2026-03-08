@@ -409,7 +409,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg?.type === 'desktop.capture.request' && msg.target === 'ble-page') {
     debugLog('desktop.capture.request');
-    captureDesktopDataUrl()
+    captureDesktopDataUrl({
+      desktopDelayMs: Number.isInteger(msg.desktop_delay_ms) ? msg.desktop_delay_ms : null
+    })
       .then((dataUrl) => sendResponse({ ok: true, dataUrl }))
       .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
     return true;
@@ -458,7 +460,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   return true;
 });
 
-async function captureDesktopDataUrl() {
+async function captureDesktopDataUrl(options = {}) {
+  const delayMs = Number.isInteger(options.desktopDelayMs)
+    ? Math.max(0, Math.min(5000, options.desktopDelayMs))
+    : 0;
   if (!chrome.desktopCapture?.chooseDesktopMedia) {
     throw new Error('desktop_capture_unavailable');
   }
@@ -484,6 +489,9 @@ async function captureDesktopDataUrl() {
   });
 
   try {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
     const [track] = stream.getVideoTracks();
     if (!track) throw new Error('desktop_capture_no_track');
     const imageCapture = new ImageCapture(track);

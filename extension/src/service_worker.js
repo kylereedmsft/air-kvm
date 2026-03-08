@@ -315,7 +315,8 @@ async function captureTabPng(config) {
 async function captureDesktopPng(config) {
   const response = await chrome.runtime.sendMessage({
     type: 'desktop.capture.request',
-    target: 'ble-page'
+    target: 'ble-page',
+    desktop_delay_ms: config.desktopDelayMs
   });
   if (!response?.ok || typeof response.dataUrl !== 'string') {
     throw new Error(response?.error || 'desktop_capture_failed');

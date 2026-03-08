@@ -334,3 +334,9 @@
   - Extension bridge now reassembles `ctrl.chunk` fragments by `chunk_id`, parses full JSON only after all fragments arrive, and suppresses partial fragments from command handlers.
   - Added bridge unit test verifying `ctrl.chunk` reassembly into a single forwarded control command.
   - Current limitation (known): continuation is currently implemented for firmware->extension control path; reverse direction continuation is not yet implemented.
+- Desktop screenshot timing improvement (March 8, 2026):
+  - User-observed issue: desktop permission dialog animation could be captured in first frame.
+  - Added optional `desktop_delay_ms` to `screenshot.request` for desktop source.
+  - MCP tooling now accepts/passes `desktop_delay_ms` for `airkvm_screenshot_desktop`.
+  - Extension service worker forwards delay hint to bridge capture route.
+  - Bridge applies bounded wait (`0..5000ms`) after permission grant and before `ImageCapture.grabFrame()`.

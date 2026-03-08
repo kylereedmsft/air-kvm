@@ -30,6 +30,7 @@
 - `quality` (number)
 - `max_chars` (int)
 - `tab_id` (int, tab source only)
+- `desktop_delay_ms` (int, desktop source; milliseconds to wait after permission before frame capture)
 - `encoding` (`bin` only)
 
 ## Core Responses

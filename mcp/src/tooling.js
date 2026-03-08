@@ -66,6 +66,7 @@ export const TOOL_DEFINITIONS = [
         max_height: { type: 'integer', minimum: 120, maximum: 1080 },
         quality: { type: 'number', minimum: 0.3, maximum: 0.9 },
         max_chars: { type: 'integer', minimum: 20000, maximum: 200000 },
+        desktop_delay_ms: { type: 'integer', minimum: 0, maximum: 5000 },
         encoding: { type: 'string', enum: ['bin'] }
       },
       required: []
@@ -134,7 +135,9 @@ export function buildCommandForTool(name, args = {}) {
     return { type: 'screenshot.request', source: 'tab', request_id: requestId, ...screenshotOptions };
   }
   if (name === 'airkvm_screenshot_desktop') {
-    return { type: 'screenshot.request', source: 'desktop', request_id: requestId, ...screenshotOptions };
+    const desktopOptions = { ...screenshotOptions };
+    if (Number.isInteger(args?.desktop_delay_ms)) desktopOptions.desktop_delay_ms = args.desktop_delay_ms;
+    return { type: 'screenshot.request', source: 'desktop', request_id: requestId, ...desktopOptions };
   }
 
   return null;

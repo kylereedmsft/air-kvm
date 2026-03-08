@@ -37,7 +37,8 @@ test('validateAgentCommand accepts screenshot.request with tuning fields', () =>
     max_width: 800,
     max_height: 450,
     quality: 0.55,
-    max_chars: 70000
+    max_chars: 70000,
+    desktop_delay_ms: 500
   });
   assert.equal(result.ok, true);
 });

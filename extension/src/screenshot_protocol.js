@@ -3,6 +3,7 @@ export const kDefaultScreenshotConfig = {
   maxHeight: 540,
   jpegQuality: 0.55,
   maxBase64Chars: 90000,
+  desktopDelayMs: 350,
   maxAttempts: 4,
   downscaleFactor: 0.8,
   minJpegQuality: 0.45
@@ -24,6 +25,7 @@ export function resolveScreenshotConfig(command, base = kDefaultScreenshotConfig
     maxHeight: clampInt(command?.max_height, 120, 1080, base.maxHeight),
     jpegQuality: clampNumber(command?.quality, 0.3, 0.9, base.jpegQuality),
     maxBase64Chars: clampInt(command?.max_chars, 20000, 200000, base.maxBase64Chars),
+    desktopDelayMs: clampInt(command?.desktop_delay_ms, 0, 5000, base.desktopDelayMs),
     encoding: 'bin',
     maxAttempts: base.maxAttempts,
     downscaleFactor: base.downscaleFactor,

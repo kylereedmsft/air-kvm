@@ -19,6 +19,10 @@ test('buildCommandForTool maps screenshot tools to screenshot.request with bin e
     tab_id: 123
   });
   const desktop = buildCommandForTool('airkvm_screenshot_desktop', { request_id: 'r2' });
+  const desktopWithDelay = buildCommandForTool('airkvm_screenshot_desktop', {
+    request_id: 'r3',
+    desktop_delay_ms: 600
+  });
   const tabs = buildCommandForTool('airkvm_list_tabs', { request_id: 't1' });
 
   assert.deepEqual(tab, {
@@ -33,6 +37,13 @@ test('buildCommandForTool maps screenshot tools to screenshot.request with bin e
     encoding: 'bin'
   });
   assert.deepEqual(desktop, { type: 'screenshot.request', source: 'desktop', request_id: 'r2', encoding: 'bin' });
+  assert.deepEqual(desktopWithDelay, {
+    type: 'screenshot.request',
+    source: 'desktop',
+    request_id: 'r3',
+    desktop_delay_ms: 600,
+    encoding: 'bin'
+  });
   assert.deepEqual(tabs, { type: 'tabs.list.request', request_id: 't1' });
 });
 

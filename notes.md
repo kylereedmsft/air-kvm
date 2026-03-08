@@ -106,3 +106,8 @@ Read all the "docs/*.md" so you understand the goals of the project.
 - `transfer.nack` resends only the requested sequence, then continues gated pumping.
 - `transfer.meta` and `transfer.done` are now hard-fail sends (throw on bridge post failure).
 - MCP UART collector null-message guard was tightened so only JSON ctrl/bin frames hit screenshot collector paths.
+
+## March 8, 2026 - Desktop Capture Stabilization
+- Added optional `desktop_delay_ms` hint on desktop screenshot requests to avoid capturing the permission-sheet animation.
+- Delay is now forwarded MCP -> extension service worker -> bridge desktop capture route.
+- Bridge applies bounded delay (`0..5000ms`) after permission grant and before first frame grab.
