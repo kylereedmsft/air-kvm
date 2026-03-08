@@ -98,14 +98,15 @@ test('binary screenshot collector reassembles transfer and emits done ack', () =
     ),
     null
   );
-  assert.equal(
-    collect(
-      null,
-      { kind: 'bin', transfer_id: transferId, seq: 0, payload: Buffer.from('ABC') },
-      []
-    ),
-    null
+  const ack = collect(
+    null,
+    { kind: 'bin', transfer_id: transferId, seq: 0, payload: Buffer.from('ABC') },
+    []
   );
+  assert.equal(ack.done, false);
+  assert.equal(Array.isArray(ack.outbound), true);
+  assert.equal(ack.outbound[0].type, 'transfer.ack');
+  assert.equal(ack.outbound[0].highest_contiguous_seq, 1);
 
   const done = collect({
     type: 'transfer.done',

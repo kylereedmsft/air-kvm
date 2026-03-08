@@ -212,7 +212,6 @@ export function createResponseCollector(name, command) {
     let timeoutRetries = 0;
     let sawTransferDone = false;
     const kMaxTimeoutRetries = 3;
-    const kAckStride = 8;
     const maxRawBytes = Math.floor((maxChars * 3) / 4);
 
     function computeHighestContiguousSeq() {
@@ -227,7 +226,6 @@ export function createResponseCollector(name, command) {
       if (!transferId) return null;
       highestContiguousSeq = computeHighestContiguousSeq();
       if (!force && highestContiguousSeq < 0) return null;
-      if (!force && highestContiguousSeq - lastAckSeq < kAckStride) return null;
       if (highestContiguousSeq === lastAckSeq) return null;
       lastAckSeq = highestContiguousSeq;
       return {

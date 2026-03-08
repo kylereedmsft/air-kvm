@@ -306,3 +306,9 @@
   - Validation:
     - `cd extension && node --test` pass
     - `cd mcp && node --test` pass
+- ACK pacing correction (March 8, 2026, late follow-up):
+  - Investigator finding: MCP ACK stride gating could create apparent sender stalls during windowed transfer when contiguous progress did not cross stride quickly.
+  - Fix: MCP screenshot collector now emits `transfer.ack` on every contiguous advance (no stride threshold).
+  - Result: extension sender receives credit updates promptly under ACK-window flow control.
+  - Validation:
+    - `cd mcp && node --test` pass (updated `tooling.test.js` to expect earlier ACK).
