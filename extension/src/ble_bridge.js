@@ -123,6 +123,24 @@ function infoLog(...args) {
   appendLog(`${new Date().toISOString()} ${rendered}`);
 }
 
+function summarizeCommand(frame) {
+  if (!frame || typeof frame !== 'object') return { type: 'unknown' };
+  return {
+    type: typeof frame.type === 'string' ? frame.type : 'unknown',
+    request_id: typeof frame.request_id === 'string' ? frame.request_id : undefined,
+    transfer_id: typeof frame.transfer_id === 'string' ? frame.transfer_id : undefined,
+    seq: Number.isInteger(frame.seq) ? frame.seq : undefined,
+    from_seq: Number.isInteger(frame.from_seq) ? frame.from_seq : undefined,
+    highest_contiguous_seq: Number.isInteger(frame.highest_contiguous_seq) ? frame.highest_contiguous_seq : undefined,
+    ok: typeof frame.ok === 'boolean' ? frame.ok : undefined,
+    error: typeof frame.error === 'string' ? frame.error : undefined
+  };
+}
+
+function commandLog(direction, frame) {
+  infoLog(`[cmd] ${direction}`, summarizeCommand(frame));
+}
+
 setBleDebugLogger((...args) => {
   if (!verboseLoggingEnabled) return;
   const rendered = args.map((part) => {
@@ -335,6 +353,7 @@ async function connectAndBind() {
         const unwrapped = unwrapCommand(command);
         debugLog('rx command from BLE', { raw: command, unwrapped });
         if (!unwrapped) return;
+        commandLog('BLE->SW', unwrapped);
         noteControlFrameForHealth(unwrapped);
         if (state.pendingHandshake && (unwrapped.type === 'state' || typeof unwrapped.ok === 'boolean')) {
           state.pendingHandshake();
@@ -508,6 +527,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
   if (msg.type !== 'ble.post') return;
+  commandLog('SW->BLE', msg.payload);
   debugLog('ble.post from service worker', {
     traceId: msg.traceId || null,
     type: msg?.payload?.type,
