@@ -33,6 +33,7 @@ AirKvmApp::AirKvmApp() : router_(transport_, state_, hid_), rx_callbacks_(*this)
 void AirKvmApp::Setup() {
   Serial.begin(115200);
   delay(200);
+  transport_.Begin();
 
   NimBLEDevice::init(kDeviceName);
   NimBLEServer* server = NimBLEDevice::createServer();

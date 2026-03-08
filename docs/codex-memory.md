@@ -211,3 +211,11 @@
   - Stopped mirroring BLE ingress payload logs (`rx.ble ...`) to UART in `CommandRouter::ProcessLine`.
   - Rationale: BLE command echo on UART created heavy log noise and increased risk of framing interleaving/parse confusion during screenshot transfers.
   - Validation: `cd firmware && pio test -e native` pass.
+- Firmware TX serialization fix (March 7, 2026, investigator):
+  - Implemented single-writer queued transport in `TransportMux` on ESP32 using FreeRTOS queue + dedicated TX task.
+  - `EmitControl`/`EmitLog` now enqueue frames; one task emits full UART lines and BLE notifications, preventing interleaved multi-context writes.
+  - `AirKvmApp::Setup` now calls `transport_.Begin()`.
+  - Maintains non-ESP32 direct fallback path for host/native builds.
+  - Validation:
+    - `cd firmware && pio test -e native` pass
+    - `cd firmware && pio run -e esp32dev` pass
