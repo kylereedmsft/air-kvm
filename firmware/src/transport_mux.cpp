@@ -16,6 +16,22 @@ constexpr const char* kCtrlPrefix = "{\"ch\":\"ctrl\",\"msg\":";
 constexpr const char* kCtrlSuffix = "}";
 constexpr const char* kLogPrefix = "{\"ch\":\"log\",\"msg\":\"";
 constexpr const char* kLogSuffix = "\"}";
+
+String ExtractTypeField(const char* payload) {
+  if (payload == nullptr) return String("unknown");
+  const std::string raw(payload);
+  const std::string needle = "\"type\":\"";
+  const size_t start = raw.find(needle);
+  if (start == std::string::npos) return String("unknown");
+  const size_t value_start = start + needle.size();
+  const size_t value_end = raw.find('"', value_start);
+  if (value_end == std::string::npos || value_end <= value_start) return String("unknown");
+  return String(raw.substr(value_start, value_end - value_start).c_str());
+}
+
+bool ShouldTraceBleControlForward(const String& type) {
+  return type.startsWith("transfer.") || type == "screenshot.request" || type == "state.request";
+}
 }  // namespace
 
 namespace airkvm::fw {
@@ -69,11 +85,15 @@ void TransportMux::EmitControl(const char* payload) {
   EnqueueFrame(frame);
 
   if (tx_char_ != nullptr) {
+    const String type = ExtractTypeField(payload);
     std::string ble_payload(payload);
     ble_payload.push_back('\n');
     tx_char_->setValue(
         reinterpret_cast<const uint8_t*>(ble_payload.data()), ble_payload.size());
     tx_char_->notify();
+    if (ShouldTraceBleControlForward(type)) {
+      EmitLog(String("ble.ctrl_notify_sent type=") + type);
+    }
   }
 }
 

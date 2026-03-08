@@ -318,3 +318,12 @@
     - This includes `transfer.ack`, `transfer.nack`, `transfer.resume`, `transfer.done.ack`, enabling exact request/transfer/seq traceability.
   - Validation:
     - `cd mcp && node --test` pass.
+- Firmware BLE notify instrumentation compile fix (March 8, 2026):
+  - NimBLE API in this environment exposes `setValue(...)` and `notify()` as `void`.
+  - Prior attempt to capture bool return values caused ESP32 compile errors.
+  - Updated instrumentation to:
+    - call `setValue/notify` directly
+    - emit trace log `ble.ctrl_notify_sent type=<...>` for high-value control frames (`transfer.*`, `screenshot.request`, `state.request`).
+  - Validation:
+    - `cd firmware && pio test -e native` pass
+    - `cd firmware && pio run -e esp32dev` pass
