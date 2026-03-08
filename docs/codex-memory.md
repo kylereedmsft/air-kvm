@@ -387,3 +387,4 @@
   - Service worker verbose logging is now off by default and can be toggled from bridge page (`airkvm.debug.set` message).
 
 - 2026-03-07: User preference: command-level bridge logs should always be visible in the bridge page log; raw BLE byte/notify traces remain verbose-only.
+- 2026-03-07: Bridge command log policy: always-visible lifecycle commands, but transport ACKs (plain {ok:true}) and transfer.ack are verbose-only; summarize plain ok frames as type=ack.

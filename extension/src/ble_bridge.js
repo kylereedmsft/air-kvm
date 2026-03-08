@@ -125,8 +125,11 @@ function infoLog(...args) {
 
 function summarizeCommand(frame) {
   if (!frame || typeof frame !== 'object') return { type: 'unknown' };
+  const inferredType = typeof frame.type === 'string'
+    ? frame.type
+    : (typeof frame.ok === 'boolean' ? 'ack' : 'unknown');
   return {
-    type: typeof frame.type === 'string' ? frame.type : 'unknown',
+    type: inferredType,
     request_id: typeof frame.request_id === 'string' ? frame.request_id : undefined,
     transfer_id: typeof frame.transfer_id === 'string' ? frame.transfer_id : undefined,
     seq: Number.isInteger(frame.seq) ? frame.seq : undefined,
@@ -137,7 +140,18 @@ function summarizeCommand(frame) {
   };
 }
 
+function isVerboseOnlyCommand(frame) {
+  if (!frame || typeof frame !== 'object') return true;
+  if (typeof frame.type === 'string') {
+    return frame.type === 'transfer.ack';
+  }
+  // Plain transport ACK frame like {"ok":true}
+  if (typeof frame.ok === 'boolean') return true;
+  return false;
+}
+
 function commandLog(direction, frame) {
+  if (!verboseLoggingEnabled && isVerboseOnlyCommand(frame)) return;
   infoLog(`[cmd] ${direction}`, summarizeCommand(frame));
 }
 
