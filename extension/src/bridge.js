@@ -2,6 +2,7 @@ const UART_SERVICE_UUID = '6e400101-b5a3-f393-e0a9-e50e24dccb01';
 const UART_RX_CHAR_UUID = '6e400102-b5a3-f393-e0a9-e50e24dccb01';
 const UART_TX_CHAR_UUID = '6e400103-b5a3-f393-e0a9-e50e24dccb01';
 const kDebug = true;
+let verboseDebugEnabled = false;
 let debugLogger = null;
 
 function debugLog(...args) {
@@ -14,6 +15,11 @@ function debugLog(...args) {
       // Non-fatal logging hook.
     }
   }
+}
+
+function debugVerbose(...args) {
+  if (!verboseDebugEnabled) return;
+  debugLog(...args);
 }
 
 function bytesToHex(view) {
@@ -78,6 +84,10 @@ export function __resetBleForTest() {
 
 export function setBleDebugLogger(logger) {
   debugLogger = typeof logger === 'function' ? logger : null;
+}
+
+export function setBleVerboseDebug(enabled) {
+  verboseDebugEnabled = Boolean(enabled);
 }
 
 function extractJsonObjects(input) {
@@ -175,9 +185,9 @@ export async function connectBle(deps = {}) {
   const server = await device.gatt.connect();
   try {
     const gatt = await describeGatt(server);
-    debugLog('gatt services', gatt);
+    debugVerbose('gatt services', gatt);
   } catch (err) {
-    debugLog('gatt describe failed', String(err?.message || err));
+    debugVerbose('gatt describe failed', String(err?.message || err));
   }
   const service = await server.getPrimaryService(UART_SERVICE_UUID);
   const rx = await service.getCharacteristic(UART_RX_CHAR_UUID);
@@ -200,7 +210,7 @@ export async function connectBle(deps = {}) {
       const value = event?.target?.value;
       if (!value) return;
       const raw = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-      debugLog('rx notify', { bytes: raw.length, hex: bytesToHex(raw) });
+      debugVerbose('rx notify', { bytes: raw.length, hex: bytesToHex(raw) });
       onBleBytes(decoder.decode(value), deps.onCommand || commandHandler);
     });
   }
@@ -278,7 +288,7 @@ export async function postEvent(payload, deps = {}) {
     const bytes = encoder.encode(line);
     const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
-    debugLog('tx', {
+    debugVerbose('tx', {
       traceId,
       type: payload?.type || 'unknown',
       bytes: bytes.length,
@@ -289,7 +299,7 @@ export async function postEvent(payload, deps = {}) {
         await rxCharacteristic.writeValueWithoutResponse(bytes);
         return true;
       } catch (err) {
-        debugLog('tx withoutResponse failed, falling back', {
+        debugVerbose('tx withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
@@ -311,7 +321,7 @@ export async function postBinary(bytes, deps = {}) {
     if (!(bytes instanceof Uint8Array)) return false;
     const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
-    debugLog('tx binary', {
+    debugVerbose('tx binary', {
       traceId,
       bytes: bytes.length,
       mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
@@ -321,7 +331,7 @@ export async function postBinary(bytes, deps = {}) {
         await rxCharacteristic.writeValueWithoutResponse(bytes);
         return true;
       } catch (err) {
-        debugLog('tx binary withoutResponse failed, falling back', {
+        debugVerbose('tx binary withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
@@ -337,7 +347,7 @@ export async function postBinary(bytes, deps = {}) {
 
 function onBleBytes(text, onCommand) {
   if (!text || typeof text !== 'string') return;
-  debugLog('rx bytes', { bytes: text.length, preview: text.slice(0, 160) });
+  debugVerbose('rx bytes', { bytes: text.length, preview: text.slice(0, 160) });
   bleLineBuffer += text;
   const { messages, rest } = extractJsonObjects(bleLineBuffer);
   bleLineBuffer = rest;

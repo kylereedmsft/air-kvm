@@ -5,24 +5,74 @@
     <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>AirKVM BLE Bridge</title>
     <style>
+      :root {
+        --bg: #0f141a;
+        --panel: #18202a;
+        --panel-2: #1f2a36;
+        --border: #2f3c4a;
+        --text: #e6edf3;
+        --muted: #aab7c4;
+        --accent: #4ea1ff;
+        --ok: #37c27f;
+        --warn: #ffcf66;
+      }
       body {
-        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        margin: 16px;
-        color: #1f1f1f;
+        font-family: 'Segoe UI', 'Helvetica Neue', sans-serif;
+        margin: 0;
+        padding: 18px;
+        color: var(--text);
+        background:
+          radial-gradient(1200px 450px at 10% -10%, #243243 0%, transparent 60%),
+          radial-gradient(1000px 380px at 100% 0%, #1b2a3a 0%, transparent 62%),
+          var(--bg);
+      }
+      .card {
+        max-width: 1080px;
+        margin: 0 auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: linear-gradient(180deg, #17212b 0%, #131b24 100%);
+        box-shadow: 0 18px 45px rgba(0, 0, 0, 0.35);
+        padding: 18px;
+      }
+      h3 {
+        margin: 0 0 6px;
+      }
+      p {
+        margin: 0 0 12px;
+        color: var(--muted);
+      }
+      #actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
       }
       button {
         padding: 8px 12px;
-        font-size: 14px;
+        font-size: 13px;
+        color: var(--text);
+        background: linear-gradient(180deg, #263342 0%, #212d3a 100%);
+        border: 1px solid #3a4a5a;
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      button:hover {
+        border-color: #52667a;
+      }
+      button:disabled {
+        opacity: 0.55;
+        cursor: default;
       }
       #status {
         margin-top: 10px;
         font-size: 13px;
+        color: var(--ok);
       }
       #log {
         margin-top: 12px;
-        border: 1px solid #d0d0d0;
+        border: 1px solid var(--border);
         border-radius: 6px;
-        background: #f7f7f7;
+        background: #0d1218;
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 12px;
         line-height: 1.35;
@@ -38,16 +88,17 @@
         word-break: break-word;
       }
       .log-row:nth-child(odd) {
-        background: #fcfcfc;
+        background: #121923;
       }
       .log-row:nth-child(even) {
-        background: #f1f3f4;
+        background: #151e29;
       }
       #log-controls {
         margin-top: 10px;
         display: flex;
         gap: 10px;
         align-items: center;
+        flex-wrap: wrap;
       }
       #toggle-autoscroll {
         padding: 6px 10px;
@@ -55,20 +106,23 @@
     </style>
   </head>
   <body>
-    <h3>AirKVM BLE Bridge</h3>
-    <p>Keep this tab open in Edge while using AirKVM.</p>
-    <div>
-      <button id="connect">Connect BLE</button>
-      <button id="disconnect">Disconnect</button>
-      <button id="forget">Forget Saved Device</button>
-      <button id="reconnect">Reconnect (Chooser)</button>
+    <div class="card">
+      <h3>AirKVM BLE Bridge</h3>
+      <p>Keep this tab open in Edge while using AirKVM.</p>
+      <div id="actions">
+        <button id="connect">Connect BLE</button>
+        <button id="disconnect">Disconnect</button>
+        <button id="forget">Forget Saved Device</button>
+        <button id="reconnect">Reconnect (Chooser)</button>
+      </div>
+      <div id="status">Disconnected</div>
+      <div id="log-controls">
+        <button id="clear-log">Clear Log</button>
+        <button id="toggle-autoscroll" aria-pressed="true">Auto-scroll: ON</button>
+        <button id="toggle-verbose" aria-pressed="false">Verbose: OFF</button>
+      </div>
+      <div id="log"></div>
     </div>
-    <div id="status">Disconnected</div>
-    <div id="log-controls">
-      <button id="clear-log">Clear Log</button>
-      <button id="toggle-autoscroll" aria-pressed="true">Auto-scroll: ON</button>
-    </div>
-    <div id="log"></div>
     <script type="module" src="./ble_bridge.js"></script>
   </body>
   </html>

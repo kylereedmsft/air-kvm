@@ -5,6 +5,7 @@ import {
   postBinary,
   postEvent,
   readBleTxSnapshot,
+  setBleVerboseDebug,
   setBleDebugLogger
 } from './bridge.js';
 
@@ -15,8 +16,10 @@ const forgetBtn = document.getElementById('forget');
 const reconnectBtn = document.getElementById('reconnect');
 const clearLogBtn = document.getElementById('clear-log');
 const toggleAutoscrollBtn = document.getElementById('toggle-autoscroll');
+const toggleVerboseBtn = document.getElementById('toggle-verbose');
 const logEl = document.getElementById('log');
 const kDebug = true;
+const kVerbosePrefStorageKey = 'airkvmVerboseBridgeLog';
 const kHandshakeTimeoutMs = 6000;
 const kHandshakeAttempts = 3;
 const kPreferredDeviceStorageKey = 'blePreferredDeviceId';
@@ -38,11 +41,34 @@ let healthState = {
 };
 let lastSwInstanceId = null;
 let autoScrollEnabled = true;
+let verboseLoggingEnabled = false;
+
+function loadVerboseLoggingPref() {
+  try {
+    return globalThis.localStorage?.getItem(kVerbosePrefStorageKey) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function persistVerboseLoggingPref() {
+  try {
+    globalThis.localStorage?.setItem(kVerbosePrefStorageKey, verboseLoggingEnabled ? '1' : '0');
+  } catch {
+    // Non-fatal.
+  }
+}
 
 function refreshAutoscrollButton() {
   if (!toggleAutoscrollBtn) return;
   toggleAutoscrollBtn.textContent = `Auto-scroll: ${autoScrollEnabled ? 'ON' : 'OFF'}`;
   toggleAutoscrollBtn.setAttribute('aria-pressed', autoScrollEnabled ? 'true' : 'false');
+}
+
+function refreshVerboseButton() {
+  if (!toggleVerboseBtn) return;
+  toggleVerboseBtn.textContent = `Verbose: ${verboseLoggingEnabled ? 'ON' : 'OFF'}`;
+  toggleVerboseBtn.setAttribute('aria-pressed', verboseLoggingEnabled ? 'true' : 'false');
 }
 
 function appendLog(line) {
@@ -71,6 +97,7 @@ function appendLog(line) {
 }
 
 function debugLog(...args) {
+  if (!verboseLoggingEnabled) return;
   if (!kDebug) return;
   console.log('[airkvm-bridge]', ...args);
   const rendered = args.map((part) => {
@@ -84,7 +111,20 @@ function debugLog(...args) {
   appendLog(`${new Date().toISOString()} ${rendered}`);
 }
 
+function infoLog(...args) {
+  const rendered = args.map((part) => {
+    if (typeof part === 'string') return part;
+    try {
+      return JSON.stringify(part);
+    } catch {
+      return String(part);
+    }
+  }).join(' ');
+  appendLog(`${new Date().toISOString()} ${rendered}`);
+}
+
 setBleDebugLogger((...args) => {
+  if (!verboseLoggingEnabled) return;
   const rendered = args.map((part) => {
     if (typeof part === 'string') return part;
     try {
@@ -148,7 +188,9 @@ function markBridgeActivity(reason = 'activity') {
   if (healthState.pendingPingResolve) {
     healthState.pendingPingResolve(true);
   }
-  debugLog('health activity', { reason });
+  if (verboseLoggingEnabled) {
+    debugLog('health activity', { reason });
+  }
 }
 
 function noteControlFrameForHealth(unwrapped) {
@@ -263,12 +305,12 @@ function waitForControlHandshake(state) {
 
 async function connectAndBind() {
   if (connectInFlight) {
-    debugLog('connect ignored: already in progress');
+    infoLog('connect ignored: already in progress');
     return;
   }
   connectInFlight = true;
   setControlsDisabled(true);
-  debugLog('connect click');
+  infoLog('connect click');
   notifySw('connect_click');
   setStatus('Connecting...');
   const state = { pendingHandshake: null };
@@ -278,9 +320,9 @@ async function connectAndBind() {
     const ok = await connectBle({
       preferredDeviceId,
       onDisconnect: () => {
-        debugLog('gattserverdisconnected');
-        void markDisconnected('gatt_disconnected');
-      },
+      infoLog('gattserverdisconnected');
+      void markDisconnected('gatt_disconnected');
+    },
       requestOptions: {
         filters: [
           { services: ['6e400101-b5a3-f393-e0a9-e50e24dccb01'], name: 'air-kvm-ctrl-cb01' },
@@ -312,8 +354,8 @@ async function connectAndBind() {
       setStatus('Web Bluetooth unavailable in this context');
       return;
     }
-    debugLog('connect success');
-    debugLog('connected device', getConnectedDeviceInfo());
+    infoLog('connect success');
+    infoLog('connected device', getConnectedDeviceInfo());
     let handshakeOk = false;
     for (let attempt = 1; attempt <= kHandshakeAttempts; attempt += 1) {
       const handshakePending = waitForControlHandshake(state);
@@ -329,10 +371,10 @@ async function connectAndBind() {
       } catch (err) {
         debugLog('handshake snapshot failed', { attempt, error: String(err?.message || err) });
       }
-      debugLog('handshake attempt timed out', { attempt });
+      infoLog('handshake attempt timed out', { attempt });
     }
     if (!handshakeOk) {
-      debugLog('connect invalid stream (no JSON control response)');
+      infoLog('connect invalid stream (no JSON control response)');
       disconnectBle();
       await clearPreferredDeviceId();
       notifySw('connect_invalid_stream');
@@ -340,13 +382,13 @@ async function connectAndBind() {
       return;
     }
     const info = getConnectedDeviceInfo();
-    debugLog('connected device info', info);
+    infoLog('connected device info', info);
     await savePreferredDeviceId(info.id);
     notifySw('connect_success');
     setStatus('Connected');
     startHealthWatchdog();
   } catch (err) {
-    debugLog('connect error', String(err?.message || err));
+    infoLog('connect error', String(err?.message || err));
     notifySw('connect_error', String(err?.message || err));
     setStatus(`Error: ${String(err?.message || err)}`);
   } finally {
@@ -364,19 +406,19 @@ connectBtn?.addEventListener('click', () => {
 });
 
 disconnectBtn?.addEventListener('click', () => {
-  debugLog('disconnect click');
+  infoLog('disconnect click');
   disconnectAndReport();
 });
 
 forgetBtn?.addEventListener('click', async () => {
-  debugLog('forget click');
+  infoLog('forget click');
   await clearPreferredDeviceId();
   notifySw('forget_device');
   setStatus('Saved device cleared');
 });
 
 reconnectBtn?.addEventListener('click', async () => {
-  debugLog('reconnect chooser click');
+  infoLog('reconnect chooser click');
   await disconnectAndReport('reconnect_start');
   await clearPreferredDeviceId();
   await connectAndBind();
@@ -392,9 +434,28 @@ toggleAutoscrollBtn?.addEventListener('click', () => {
   refreshAutoscrollButton();
 });
 
+toggleVerboseBtn?.addEventListener('click', async () => {
+  verboseLoggingEnabled = !verboseLoggingEnabled;
+  setBleVerboseDebug(verboseLoggingEnabled);
+  persistVerboseLoggingPref();
+  refreshVerboseButton();
+  infoLog('verbose logging', { enabled: verboseLoggingEnabled });
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'airkvm.debug.set',
+      verbose: verboseLoggingEnabled
+    });
+  } catch {
+    // Non-fatal.
+  }
+});
+
+verboseLoggingEnabled = loadVerboseLoggingPref();
+setBleVerboseDebug(verboseLoggingEnabled);
 notifySw('bridge_loaded');
-debugLog('bridge_loaded');
+infoLog('bridge_loaded');
 refreshAutoscrollButton();
+refreshVerboseButton();
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'ble.sw.alive' && msg.target === 'ble-page') {

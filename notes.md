@@ -130,3 +130,9 @@ Read all the "docs/*.md" so you understand the goals of the project.
 - Device not appearing in BLE chooser traced to startup abort on TX queue allocation.
 - Queue item grew with framed transport; depth 128 was too heavy with fail-fast allocation.
 - Reduced TX queue depth to 12 to restore startup + advertising while keeping single-path TX design.
+
+## March 8, 2026 - Harness + UX Cleanup
+- Added robust MCP tool-call harness (`scripts/mcp-tool-call.mjs`) with buffered stdout line parsing.
+- Updated smoke script (`scripts/poc-smoke.mjs`) to avoid dropping partial JSON-RPC lines.
+- Bridge page moved to a dark mode UI and includes a persisted `Verbose` toggle.
+- Extension logging defaults are quieter; byte-level BLE trace spam is now verbose-only.

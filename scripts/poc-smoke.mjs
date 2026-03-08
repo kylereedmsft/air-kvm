@@ -23,15 +23,21 @@ function run() {
     const waiting = new Map();
     let bootstrapped = false;
     let timeoutId = null;
+    let stdoutCarry = '';
 
     child.stdout.setEncoding('utf8');
     child.stdout.on('data', (chunk) => {
-      for (const line of chunk.split('\n')) {
+      stdoutCarry += chunk;
+      let newline = stdoutCarry.indexOf('\n');
+      while (newline !== -1) {
+        const line = stdoutCarry.slice(0, newline);
+        stdoutCarry = stdoutCarry.slice(newline + 1);
         if (!line.trim()) continue;
         let msg;
         try {
           msg = JSON.parse(line);
         } catch {
+          newline = stdoutCarry.indexOf('\n');
           continue;
         }
         if (typeof msg.id !== 'undefined' && waiting.has(msg.id)) {
@@ -39,6 +45,7 @@ function run() {
           waiting.delete(msg.id);
           done(msg);
         }
+        newline = stdoutCarry.indexOf('\n');
       }
     });
 

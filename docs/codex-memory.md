@@ -373,3 +373,15 @@
   - Live debug validation (`AIRKVM_UART_DEBUG=1`):
     - desktop screenshot request completed end-to-end with progressive `transfer.ack` and final `transfer.done.ack`.
     - response returned `mime=image/jpeg`, `encoding=bin`, and full base64 payload.
+- Tool harness reliability fix (March 8, 2026):
+  - Root cause of false "MCP timeout/hang" during large screenshot responses was client-side stdout parsing:
+    - parser split each incoming chunk on `\\n` without carry buffer, dropping partial JSON-RPC lines.
+  - Added robust line-buffered tool harness script:
+    - `scripts/mcp-tool-call.mjs`
+    - supports large responses by carrying incomplete stdout line fragments across chunks.
+  - Updated existing smoke harness (`scripts/poc-smoke.mjs`) to use the same buffered line parsing pattern.
+- Extension UX/logging tune (March 8, 2026):
+  - Bridge page restyled to dark mode card layout with cleaner controls.
+  - Added bridge-page `Verbose: ON/OFF` toggle (persisted in local storage).
+  - Reduced BLE log spam by gating byte-level notify/tx tracing behind verbose mode.
+  - Service worker verbose logging is now off by default and can be toggled from bridge page (`airkvm.debug.set` message).

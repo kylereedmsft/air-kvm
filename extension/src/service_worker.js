@@ -1,7 +1,8 @@
 import { dataUrlToMetaAndChunks, resolveScreenshotConfig } from './screenshot_protocol.js';
 import { encodeTransferChunkFrame, makeTransferId } from './binary_frame.js';
 const kBleBridgePagePath = 'src/ble_bridge.html';
-const kDebug = true;
+const kDebugDefault = false;
+const kDebugStorageKey = 'airkvmVerboseBridgeLog';
 const kScreenshotCaptureTimeoutMs = 25000;
 const kScreenshotStageTimeoutMs = 10000;
 const kTransferAckWindow = 8;
@@ -13,9 +14,18 @@ let bridgeTraceSeq = 0;
 let screenshotInFlight = false;
 const screenshotTransfers = new Map();
 const kSwInstanceId = `sw_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+let debugEnabled = kDebugDefault;
+
+try {
+  chrome.storage?.local?.get(kDebugStorageKey).then((stored) => {
+    debugEnabled = stored?.[kDebugStorageKey] === '1';
+  }).catch(() => {});
+} catch {
+  // Non-fatal.
+}
 
 function debugLog(...args) {
-  if (!kDebug) return;
+  if (!debugEnabled) return;
   console.log('[airkvm-sw]', `[${kSwInstanceId}]`, ...args);
 }
 
@@ -194,6 +204,12 @@ async function postBinaryViaBridge(bytes) {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || typeof msg.type !== 'string') return;
+  if (msg.type === 'airkvm.debug.set') {
+    debugEnabled = Boolean(msg.verbose);
+    chrome.storage?.local?.set({ [kDebugStorageKey]: debugEnabled ? '1' : '0' }).catch(() => {});
+    sendResponse({ ok: true });
+    return true;
+  }
   if (msg.type === 'ble.bridge.status') {
     debugLog('bridge status', { status: msg.status, detail: msg.detail ?? null, tabId: sender?.tab?.id ?? null });
     sendResponse({ ok: true });
