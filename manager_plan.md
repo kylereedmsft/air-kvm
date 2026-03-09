@@ -58,3 +58,4 @@ Planned sequence:
      - `mixed` lane: 20/20 and 50/50 pass
    - Remaining to close step: manual reconnect lane (5 cycles) + sleep/wake lane (3 cycles).
 4. [ ] Canary rollout with explicit go/no-go gates and rollback path.
+   - Runbook: `docs/hid-canary-rollout.md`
