@@ -38,3 +38,16 @@ Status: Not started
    - firmware parse branches for `screenshot.meta` / `screenshot.chunk`
 3. [ ] Add guardrail telemetry/assertions before removing legacy branches.
 4. [ ] Expand integration tests for transfer lifecycle and reconnect/resume behavior.
+
+## Next Track (HID + Browser Coexistence)
+Status: Drafted, pending review
+
+Plan document:
+- `docs/hid-coexistence-plan.md`
+- Agent dispatch board: `docs/hid-coexistence-plan.md` -> "Agent Task List (Execution-Ready)"
+
+Planned sequence:
+1. [x] Phase 0 instrumentation (firmware + extension connection/failure telemetry), no behavior change.
+2. [x] Add HID-enabled firmware build variant behind flag; keep default build HID-off.
+3. [ ] Run bench validation matrix (browser-only, HID-only, mixed load, reconnect/sleep-wake faults).
+4. [ ] Canary rollout with explicit go/no-go gates and rollback path.

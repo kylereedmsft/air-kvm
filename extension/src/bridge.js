@@ -22,6 +22,10 @@ function debugVerbose(...args) {
   debugLog(...args);
 }
 
+function emitTelemetry(event) {
+  debugVerbose(event);
+}
+
 function bytesToHex(view) {
   if (!view) return '';
   const bytes = view instanceof Uint8Array ? view : new Uint8Array(view.buffer, view.byteOffset, view.byteLength);
@@ -79,6 +83,7 @@ export function __resetBleForTest() {
   bleLineBuffer = '';
   commandHandler = null;
   controlChunkSessions.clear();
+  verboseDebugEnabled = false;
   debugLogger = null;
 }
 
@@ -170,7 +175,30 @@ async function pickDevice(navigatorLike, deps = {}) {
     filters: [{ services: [UART_SERVICE_UUID] }],
     optionalServices: [UART_SERVICE_UUID]
   };
-  return navigatorLike.bluetooth.requestDevice(requestOptions);
+  emitTelemetry({
+    evt: 'ble.connect.stage',
+    stage: 'requestDevice',
+    result: 'attempt'
+  });
+  try {
+    const device = await navigatorLike.bluetooth.requestDevice(requestOptions);
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'requestDevice',
+      result: 'ok',
+      device_id: device?.id || null,
+      device_name: device?.name || null
+    });
+    return device;
+  } catch (err) {
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'requestDevice',
+      result: 'fail',
+      error: String(err?.message || err)
+    });
+    throw err;
+  }
 }
 
 export async function connectBle(deps = {}) {
@@ -189,9 +217,89 @@ export async function connectBle(deps = {}) {
   } catch (err) {
     debugVerbose('gatt describe failed', String(err?.message || err));
   }
-  const service = await server.getPrimaryService(UART_SERVICE_UUID);
-  const rx = await service.getCharacteristic(UART_RX_CHAR_UUID);
-  const tx = await service.getCharacteristic(UART_TX_CHAR_UUID);
+  emitTelemetry({
+    evt: 'ble.connect.stage',
+    stage: 'getPrimaryService',
+    result: 'attempt',
+    service_uuid: UART_SERVICE_UUID
+  });
+  let service = null;
+  try {
+    service = await server.getPrimaryService(UART_SERVICE_UUID);
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getPrimaryService',
+      result: 'ok',
+      service_uuid: service?.uuid || UART_SERVICE_UUID
+    });
+  } catch (err) {
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getPrimaryService',
+      result: 'fail',
+      service_uuid: UART_SERVICE_UUID,
+      error: String(err?.message || err)
+    });
+    throw err;
+  }
+
+  emitTelemetry({
+    evt: 'ble.connect.stage',
+    stage: 'getCharacteristic',
+    target: 'rx',
+    result: 'attempt',
+    char_uuid: UART_RX_CHAR_UUID
+  });
+  let rx = null;
+  try {
+    rx = await service.getCharacteristic(UART_RX_CHAR_UUID);
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getCharacteristic',
+      target: 'rx',
+      result: 'ok',
+      char_uuid: rx?.uuid || UART_RX_CHAR_UUID
+    });
+  } catch (err) {
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getCharacteristic',
+      target: 'rx',
+      result: 'fail',
+      char_uuid: UART_RX_CHAR_UUID,
+      error: String(err?.message || err)
+    });
+    throw err;
+  }
+
+  emitTelemetry({
+    evt: 'ble.connect.stage',
+    stage: 'getCharacteristic',
+    target: 'tx',
+    result: 'attempt',
+    char_uuid: UART_TX_CHAR_UUID
+  });
+  let tx = null;
+  try {
+    tx = await service.getCharacteristic(UART_TX_CHAR_UUID);
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getCharacteristic',
+      target: 'tx',
+      result: 'ok',
+      char_uuid: tx?.uuid || UART_TX_CHAR_UUID
+    });
+  } catch (err) {
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'getCharacteristic',
+      target: 'tx',
+      result: 'fail',
+      char_uuid: UART_TX_CHAR_UUID,
+      error: String(err?.message || err)
+    });
+    throw err;
+  }
   debugLog('selected chars', {
     service: service?.uuid || null,
     rx: { uuid: rx?.uuid || null, properties: propsToObject(rx?.properties) },
@@ -215,8 +323,31 @@ export async function connectBle(deps = {}) {
     });
   }
   if (typeof txCharacteristic?.startNotifications === 'function') {
-    await txCharacteristic.startNotifications();
-    debugLog('notifications started');
+    emitTelemetry({
+      evt: 'ble.connect.stage',
+      stage: 'startNotifications',
+      result: 'attempt',
+      char_uuid: txCharacteristic?.uuid || UART_TX_CHAR_UUID
+    });
+    try {
+      await txCharacteristic.startNotifications();
+      emitTelemetry({
+        evt: 'ble.connect.stage',
+        stage: 'startNotifications',
+        result: 'ok',
+        char_uuid: txCharacteristic?.uuid || UART_TX_CHAR_UUID
+      });
+      debugLog('notifications started');
+    } catch (err) {
+      emitTelemetry({
+        evt: 'ble.connect.stage',
+        stage: 'startNotifications',
+        result: 'fail',
+        char_uuid: txCharacteristic?.uuid || UART_TX_CHAR_UUID,
+        error: String(err?.message || err)
+      });
+      throw err;
+    }
   }
 
   device.addEventListener('gattserverdisconnected', () => {
@@ -288,24 +419,80 @@ export async function postEvent(payload, deps = {}) {
     const bytes = encoder.encode(line);
     const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
+    const payloadType = payload?.type || 'unknown';
     debugVerbose('tx', {
       traceId,
-      type: payload?.type || 'unknown',
+      type: payloadType,
       bytes: bytes.length,
       mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
     });
     if (supportsWithoutResponse) {
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithoutResponse',
+        result: 'attempt',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: bytes.length
+      });
       try {
         await rxCharacteristic.writeValueWithoutResponse(bytes);
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'ok',
+          trace_id: traceId,
+          payload_type: payloadType,
+          bytes: bytes.length
+        });
         return true;
       } catch (err) {
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'fail',
+          trace_id: traceId,
+          payload_type: payloadType,
+          bytes: bytes.length,
+          error: String(err?.message || err)
+        });
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'fallback',
+          to: 'writeValueWithResponse',
+          trace_id: traceId,
+          payload_type: payloadType,
+          bytes: bytes.length
+        });
         debugVerbose('tx withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
       }
     }
-    await rxCharacteristic.writeValueWithResponse(bytes);
+    try {
+      await rxCharacteristic.writeValueWithResponse(bytes);
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithResponse',
+        result: 'ok',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: bytes.length
+      });
+    } catch (err) {
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithResponse',
+        result: 'fail',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: bytes.length,
+        error: String(err?.message || err)
+      });
+      throw err;
+    }
     return true;
   } catch {
     debugLog('postEvent failed', { traceId, type: payload?.type || 'unknown' });
@@ -327,17 +514,72 @@ export async function postBinary(bytes, deps = {}) {
       mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
     });
     if (supportsWithoutResponse) {
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithoutResponse',
+        result: 'attempt',
+        trace_id: traceId,
+        payload_type: 'binary',
+        bytes: bytes.length
+      });
       try {
         await rxCharacteristic.writeValueWithoutResponse(bytes);
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'ok',
+          trace_id: traceId,
+          payload_type: 'binary',
+          bytes: bytes.length
+        });
         return true;
       } catch (err) {
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'fail',
+          trace_id: traceId,
+          payload_type: 'binary',
+          bytes: bytes.length,
+          error: String(err?.message || err)
+        });
+        emitTelemetry({
+          evt: 'ble.tx',
+          op: 'writeValueWithoutResponse',
+          result: 'fallback',
+          to: 'writeValueWithResponse',
+          trace_id: traceId,
+          payload_type: 'binary',
+          bytes: bytes.length
+        });
         debugVerbose('tx binary withoutResponse failed, falling back', {
           traceId,
           error: String(err?.message || err)
         });
       }
     }
-    await rxCharacteristic.writeValueWithResponse(bytes);
+    try {
+      await rxCharacteristic.writeValueWithResponse(bytes);
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithResponse',
+        result: 'ok',
+        trace_id: traceId,
+        payload_type: 'binary',
+        bytes: bytes.length
+      });
+    } catch (err) {
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithResponse',
+        result: 'fail',
+        trace_id: traceId,
+        payload_type: 'binary',
+        bytes: bytes.length,
+        error: String(err?.message || err)
+      });
+      throw err;
+    }
     return true;
   } catch {
     debugLog('postBinary failed', { traceId });

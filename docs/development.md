@@ -26,6 +26,41 @@ This runs:
 3. `cd firmware && pio test -e native`
 4. `cd firmware && pio run -e esp32dev`
 
+## Firmware Build Variants (HID Off / HID On)
+
+Default variant (HID off, unchanged current path):
+
+```bash
+cd firmware
+pio run -e esp32dev
+```
+
+HID+UART coexistence variant (HID enabled):
+
+```bash
+cd firmware
+pio run -e esp32dev_hid_uart
+```
+
+Flash default HID-off variant:
+
+```bash
+cd firmware
+pio run -e esp32dev -t upload
+```
+
+Flash HID+UART variant:
+
+```bash
+cd firmware
+pio run -e esp32dev_hid_uart -t upload
+```
+
+Rollback guidance:
+1. Reflash with default HID-off: `cd firmware && pio run -e esp32dev -t upload`.
+2. Power-cycle/reset device and reconnect BLE.
+3. If host pairing behavior changed during HID testing, clear the host BLE pairing cache and pair again.
+
 ## Manual Commands
 
 Run MCP server:

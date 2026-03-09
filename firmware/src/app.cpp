@@ -36,6 +36,10 @@ bool IsBinaryTransferFrame(const std::string& value) {
   const size_t expected_len = kTransferMinFrameLen + payload_len;
   return value.size() == expected_len;
 }
+
+String JsonBool(bool value) {
+  return value ? "true" : "false";
+}
 }  // namespace
 
 namespace airkvm::fw {
@@ -45,7 +49,10 @@ AirKvmApp& AirKvmApp::Instance() {
   return app;
 }
 
-AirKvmApp::AirKvmApp() : router_(transport_, state_, hid_), rx_callbacks_(*this) {}
+AirKvmApp::AirKvmApp()
+    : router_(transport_, state_, hid_), rx_callbacks_(*this), server_callbacks_(*this) {
+  hid_.SetTelemetrySink(&transport_);
+}
 
 void AirKvmApp::Setup() {
   Serial.begin(115200);
@@ -58,11 +65,28 @@ void AirKvmApp::Setup() {
 #endif
 
   NimBLEDevice::init(kDeviceName);
+  if (AIRKVM_ENABLE_HID) {
+    // Make HID pairing/bonding explicit for host OSes that require secure HID workflows.
+    NimBLEDevice::setSecurityAuth(true, false, true);
+    NimBLEDevice::setSecurityIOCap(0x03);  // BLE_HS_IO_NO_INPUT_OUTPUT
+  }
   NimBLEServer* server = NimBLEDevice::createServer();
+  server->setCallbacks(&server_callbacks_);
   NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  hid_enabled_ = AIRKVM_ENABLE_HID != 0;
+  String adv_services = "[\"";
+  adv_services += kServiceUuid;
+  adv_services += "\"";
   if (AIRKVM_ENABLE_HID) {
     hid_.Setup(server, advertising);
+    const String hid_uuid = hid_.HidServiceUuid();
+    if (hid_uuid.length() > 0) {
+      adv_services += ",\"";
+      adv_services += hid_uuid;
+      adv_services += "\"";
+    }
   }
+  adv_services += "]";
 
   NimBLEService* service = server->createService(kServiceUuid);
 
@@ -77,7 +101,15 @@ void AirKvmApp::Setup() {
   service->start();
   advertising->addServiceUUID(kServiceUuid);
   advertising->setScanResponse(true);
+  transport_.EmitLog(
+      String("{\"evt\":\"ble.adv.payload\",\"hid_enabled\":") + JsonBool(hid_enabled_) +
+      ",\"device_name\":\"" + kDeviceName +
+      "\",\"adv_services\":" + adv_services +
+      ",\"scan_rsp_services\":[]}");
   advertising->start();
+  transport_.EmitLog(
+      String("{\"evt\":\"ble.adv.start\",\"hid_enabled\":") + JsonBool(hid_enabled_) +
+      ",\"device_name\":\"" + kDeviceName + "\"}");
 
   transport_.EmitControl(kBootMsg);
 }
@@ -153,6 +185,44 @@ AirKvmApp::RxCallbacks::RxCallbacks(AirKvmApp& app) : app_(app) {}
 
 void AirKvmApp::RxCallbacks::onWrite(NimBLECharacteristic* characteristic) {
   app_.OnBleWrite(characteristic->getValue());
+}
+
+AirKvmApp::ServerCallbacks::ServerCallbacks(AirKvmApp& app) : app_(app) {}
+
+void AirKvmApp::ServerCallbacks::onConnect(NimBLEServer* server) {
+  app_.OnBleConnected(server);
+}
+
+void AirKvmApp::ServerCallbacks::onDisconnect(NimBLEServer* server) {
+  app_.OnBleDisconnected(server);
+}
+
+void AirKvmApp::OnBleConnected(NimBLEServer* server) {
+  active_conn_count_ = server != nullptr ? static_cast<uint32_t>(server->getConnectedCount()) : active_conn_count_ + 1;
+  bool adv_restart_ok = false;
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  if (advertising != nullptr) {
+    adv_restart_ok = advertising->start();
+  }
+  transport_.EmitLog(
+      String("{\"evt\":\"ble.conn\",\"conn_id\":null,\"peer\":null,\"active_conn_count\":") +
+      String(active_conn_count_) +
+      ",\"adv_restart\":" + JsonBool(adv_restart_ok) +
+      ",\"hid_enabled\":" + JsonBool(hid_enabled_) + "}");
+}
+
+void AirKvmApp::OnBleDisconnected(NimBLEServer* server) {
+  active_conn_count_ = server != nullptr ? static_cast<uint32_t>(server->getConnectedCount()) : 0;
+  bool adv_restart_ok = false;
+  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
+  if (advertising != nullptr) {
+    adv_restart_ok = advertising->start();
+  }
+  transport_.EmitLog(
+      String("{\"evt\":\"ble.disc\",\"conn_id\":null,\"peer\":null,\"disc_reason\":null,\"active_conn_count\":") +
+      String(active_conn_count_) +
+      ",\"adv_restart\":" + JsonBool(adv_restart_ok) +
+      ",\"hid_enabled\":" + JsonBool(hid_enabled_) + "}");
 }
 
 }  // namespace airkvm::fw

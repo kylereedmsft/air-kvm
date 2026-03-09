@@ -3,6 +3,8 @@
 #include <NimBLEDevice.h>
 #include <NimBLEHIDDevice.h>
 
+#include "transport_mux.hpp"
+
 namespace {
 // Keyboard report (ID 1) + mouse report (ID 2).
 const uint8_t kHidReportMap[] = {
@@ -67,6 +69,14 @@ constexpr uint8_t kMouseReportId = 2;
 
 namespace airkvm::fw {
 
+void HidController::SetTelemetrySink(TransportMux* transport) {
+  telemetry_ = transport;
+}
+
+String HidController::HidServiceUuid() const {
+  return hid_service_uuid_;
+}
+
 void HidController::Setup(NimBLEServer* server, NimBLEAdvertising* advertising) {
   if (server == nullptr) {
     return;
@@ -82,32 +92,43 @@ void HidController::Setup(NimBLEServer* server, NimBLEAdvertising* advertising) 
   hid_device_->reportMap((uint8_t*)kHidReportMap, sizeof(kHidReportMap));
   hid_device_->setBatteryLevel(100);
   hid_device_->startServices();
+  hid_service_uuid_ = String(hid_device_->hidService()->getUUID().toString().c_str());
 
   if (advertising != nullptr) {
     advertising->addServiceUUID(hid_device_->hidService()->getUUID());
+    advertising->setAppearance(HID_KEYBOARD);
   }
 }
 
 bool HidController::SendMouseMoveRel(int dx, int dy) {
-  return NotifyMouse(0, dx, dy, 0);
+  const bool ok = NotifyMouse(0, dx, dy, 0);
+  EmitInjectTelemetry("mouse.move_rel", ok, ok ? nullptr : "notify_failed");
+  return ok;
 }
 
 bool HidController::SendMouseClick(const String& button) {
   const uint8_t mask = ButtonMask(button);
   if (mask == 0) {
+    EmitInjectTelemetry("mouse.click", false, "invalid_button");
     return false;
   }
 
-  return NotifyMouse(mask, 0, 0, 0) && NotifyMouse(0, 0, 0, 0);
+  const bool ok = NotifyMouse(mask, 0, 0, 0) && NotifyMouse(0, 0, 0, 0);
+  EmitInjectTelemetry("mouse.click", ok, ok ? nullptr : "notify_failed");
+  return ok;
 }
 
 bool HidController::SendKeyTap(const String& key) {
-  const uint8_t code = KeyCode(key);
-  if (code == 0) {
+  uint8_t modifier = 0;
+  uint8_t code = 0;
+  if (!ResolveKeyTap(key, &modifier, &code)) {
+    EmitInjectTelemetry("key.tap", false, "invalid_key");
     return false;
   }
 
-  return NotifyKeyboard(0, code) && NotifyKeyboard(0, 0);
+  const bool ok = NotifyKeyboard(modifier, code) && NotifyKeyboard(0, 0);
+  EmitInjectTelemetry("key.tap", ok, ok ? nullptr : "notify_failed");
+  return ok;
 }
 
 int8_t HidController::ClampAxis(int value) {
@@ -133,35 +154,81 @@ uint8_t HidController::ButtonMask(const String& button) {
   return 0;
 }
 
-uint8_t HidController::KeyCode(const String& key) {
+bool HidController::ResolveKeyTap(const String& key, uint8_t* modifier, uint8_t* keycode) {
+  if (modifier == nullptr || keycode == nullptr) return false;
+  *modifier = 0;
+  *keycode = 0;
+
+  if (key == "Shift" || key == "ShiftLeft") {
+    *modifier = 0x02;
+    return true;
+  }
+  if (key == "ShiftRight") {
+    *modifier = 0x20;
+    return true;
+  }
+  if (key == "Control" || key == "Ctrl" || key == "ControlLeft") {
+    *modifier = 0x01;
+    return true;
+  }
+  if (key == "ControlRight") {
+    *modifier = 0x10;
+    return true;
+  }
+  if (key == "Alt" || key == "AltLeft" || key == "Option") {
+    *modifier = 0x04;
+    return true;
+  }
+  if (key == "AltRight" || key == "OptionRight") {
+    *modifier = 0x40;
+    return true;
+  }
+  if (key == "Meta" || key == "Command" || key == "MetaLeft" || key == "CommandLeft") {
+    *modifier = 0x08;
+    return true;
+  }
+  if (key == "MetaRight" || key == "CommandRight") {
+    *modifier = 0x80;
+    return true;
+  }
+
   if (key == "Enter") {
-    return 0x28;
+    *keycode = 0x28;
+    return true;
   }
   if (key == "Tab") {
-    return 0x2B;
+    *keycode = 0x2B;
+    return true;
   }
   if (key == "Escape") {
-    return 0x29;
+    *keycode = 0x29;
+    return true;
   }
   if (key == "Space") {
-    return 0x2C;
+    *keycode = 0x2C;
+    return true;
   }
   if (key.length() == 1) {
     const char c = key[0];
     if (c >= 'a' && c <= 'z') {
-      return static_cast<uint8_t>(0x04 + (c - 'a'));
+      *keycode = static_cast<uint8_t>(0x04 + (c - 'a'));
+      return true;
     }
     if (c >= 'A' && c <= 'Z') {
-      return static_cast<uint8_t>(0x04 + (c - 'A'));
+      *keycode = static_cast<uint8_t>(0x04 + (c - 'A'));
+      *modifier = 0x02;
+      return true;
     }
     if (c >= '1' && c <= '9') {
-      return static_cast<uint8_t>(0x1E + (c - '1'));
+      *keycode = static_cast<uint8_t>(0x1E + (c - '1'));
+      return true;
     }
     if (c == '0') {
-      return 0x27;
+      *keycode = 0x27;
+      return true;
     }
   }
-  return 0;
+  return false;
 }
 
 bool HidController::NotifyKeyboard(uint8_t modifier, uint8_t keycode) {
@@ -189,6 +256,22 @@ bool HidController::NotifyMouse(uint8_t buttons, int dx, int dy, int wheel) {
   mouse_input_->setValue(report, sizeof(report));
   mouse_input_->notify();
   return true;
+}
+
+void HidController::EmitInjectTelemetry(const char* cmd_type, bool result, const char* reject_reason) {
+  if (telemetry_ == nullptr) return;
+  String payload = "{\"evt\":\"hid.inject\",\"cmd_type\":\"";
+  payload += cmd_type != nullptr ? cmd_type : "unknown";
+  payload += "\",\"result\":\"";
+  payload += result ? "ok" : "reject";
+  payload += "\"";
+  if (!result && reject_reason != nullptr) {
+    payload += ",\"reject_reason\":\"";
+    payload += reject_reason;
+    payload += "\"";
+  }
+  payload += "}";
+  telemetry_->EmitLog(payload);
 }
 
 }  // namespace airkvm::fw

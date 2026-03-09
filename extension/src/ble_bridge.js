@@ -40,6 +40,7 @@ let healthState = {
   lastActivityAt: 0
 };
 let lastSwInstanceId = null;
+let lastCommandContext = null;
 let autoScrollEnabled = true;
 let verboseLoggingEnabled = false;
 
@@ -152,6 +153,13 @@ function isVerboseOnlyCommand(frame) {
 }
 
 function commandLog(direction, frame) {
+  lastCommandContext = {
+    direction,
+    type: typeof frame?.type === 'string' ? frame.type : null,
+    request_id: typeof frame?.request_id === 'string' ? frame.request_id : null,
+    transfer_id: typeof frame?.transfer_id === 'string' ? frame.transfer_id : null,
+    ts: Date.now()
+  };
   if (!verboseLoggingEnabled && direction === 'SW->BLE') return;
   if (!verboseLoggingEnabled && isVerboseOnlyCommand(frame)) return;
   infoLog(`[cmd] ${direction}`, summarizeCommand(frame));
@@ -186,6 +194,15 @@ function stopHealthWatchdog() {
 async function markDisconnected(reason) {
   if (disconnectInFlight) return;
   disconnectInFlight = true;
+  const connectedInfo = getConnectedDeviceInfo();
+  infoLog('[telemetry]', {
+    evt: 'ble.disconnect.snapshot',
+    reason: reason || null,
+    gatt_connected: Boolean(connectedInfo.connected),
+    health_misses: Number.isInteger(healthState.misses) ? healthState.misses : 0,
+    last_activity_at: healthState.lastActivityAt || null,
+    last_command_context: lastCommandContext
+  });
   stopHealthWatchdog();
   disconnectBle();
   notifySw('disconnect', reason || null);

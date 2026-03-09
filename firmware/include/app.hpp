@@ -42,10 +42,23 @@ class AirKvmApp {
     AirKvmApp& app_;
   };
 
+  class ServerCallbacks : public NimBLEServerCallbacks {
+   public:
+    explicit ServerCallbacks(AirKvmApp& app);
+
+    void onConnect(NimBLEServer* server) override;
+    void onDisconnect(NimBLEServer* server) override;
+
+   private:
+    AirKvmApp& app_;
+  };
+
   AirKvmApp();
 
   void OnBleWrite(const std::string& value);
   void ProcessBleWrite(const std::string& value);
+  void OnBleConnected(NimBLEServer* server);
+  void OnBleDisconnected(NimBLEServer* server);
 #if defined(ESP32)
   void DrainBleRxQueue();
   QueueHandle_t ble_rx_queue_{nullptr};
@@ -58,6 +71,9 @@ class AirKvmApp {
   UartLineReader uart_reader_;
   String ble_buffer_;
   RxCallbacks rx_callbacks_;
+  ServerCallbacks server_callbacks_;
+  uint32_t active_conn_count_{0};
+  bool hid_enabled_{false};
 };
 
 }  // namespace airkvm::fw
