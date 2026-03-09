@@ -74,6 +74,12 @@ std::optional<Command> ParseCommandLine(const std::string& line) {
     return cmd;
   }
 
+  if (Contains(line, "\"type\":\"key.type\"")) {
+    cmd.type = CommandType::kKeyType;
+    cmd.text = ExtractString(line, "text");
+    return cmd;
+  }
+
   if (Contains(line, "\"type\":\"state.request\"")) {
     cmd.type = CommandType::kStateRequest;
     return cmd;

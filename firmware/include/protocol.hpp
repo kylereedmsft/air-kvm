@@ -12,6 +12,7 @@ enum class CommandType {
   kMouseMoveAbs,
   kMouseClick,
   kKeyTap,
+  kKeyType,
   kStateRequest,
   kStateSet,
   kFwVersionRequest,
@@ -54,6 +55,7 @@ struct Command {
   bool busy{false};
   std::string button;
   std::string key;
+  std::string text;
   std::string source;
   std::string request_id;
   std::string raw;

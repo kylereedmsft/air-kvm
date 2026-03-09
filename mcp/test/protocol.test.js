@@ -14,6 +14,23 @@ test('validateAgentCommand rejects bad key.tap', () => {
   assert.equal(result.error, 'invalid_key_tap');
 });
 
+test('validateAgentCommand accepts key.type with bounded text', () => {
+  const result = validateAgentCommand({ type: 'key.type', text: 'Bluetooth' });
+  assert.equal(result.ok, true);
+});
+
+test('validateAgentCommand rejects key.type with empty text', () => {
+  const result = validateAgentCommand({ type: 'key.type', text: '' });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'invalid_key_type');
+});
+
+test('validateAgentCommand rejects key.type with unsupported characters', () => {
+  const result = validateAgentCommand({ type: 'key.type', text: 'hello!' });
+  assert.equal(result.ok, false);
+  assert.equal(result.error, 'invalid_key_type');
+});
+
 test('toDeviceLine returns JSONL', () => {
   const line = toDeviceLine({ type: 'state.request' });
   assert.equal(line, '{"type":"state.request"}\n');

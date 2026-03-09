@@ -588,6 +588,8 @@ async function blobToDataUrl(blob) {
 }
 
 async function encodeBitmapToJpegDataUrl(bitmap, config) {
+  const sourceWidth = bitmap.width;
+  const sourceHeight = bitmap.height;
   let size = fitWithin(bitmap.width, bitmap.height, config.maxWidth, config.maxHeight);
   let quality = config.jpegQuality;
   let bestBlob = null;
@@ -624,6 +626,8 @@ async function encodeBitmapToJpegDataUrl(bitmap, config) {
   const dataUrl = await blobToDataUrl(bestBlob);
   return {
     dataUrl,
+    sourceWidth,
+    sourceHeight,
     encodedWidth: size.width,
     encodedHeight: size.height,
     encodedQuality: quality,

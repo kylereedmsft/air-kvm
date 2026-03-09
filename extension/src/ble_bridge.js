@@ -23,6 +23,7 @@ const kVerbosePrefStorageKey = 'airkvmVerboseBridgeLog';
 const kHandshakeTimeoutMs = 6000;
 const kHandshakeAttempts = 3;
 const kPreferredDeviceStorageKey = 'blePreferredDeviceId';
+const kPreferredDeviceNameStorageKey = 'blePreferredDeviceName';
 const kMaxLogLines = 250;
 const kHealthPingIntervalMs = 6000;
 const kHealthPingTimeoutMs = 4000;
@@ -295,32 +296,80 @@ function notifySw(status, detail = null) {
   chrome.runtime.sendMessage({ type: 'ble.bridge.status', status, detail }).catch(() => {});
 }
 
-async function loadPreferredDeviceId() {
+function loadPreferredDeviceLocalFallback() {
   try {
-    const stored = await chrome.storage.local.get(kPreferredDeviceStorageKey);
-    return typeof stored?.[kPreferredDeviceStorageKey] === 'string'
-      ? stored[kPreferredDeviceStorageKey]
-      : null;
+    const id = globalThis.localStorage?.getItem(kPreferredDeviceStorageKey) || null;
+    const name = globalThis.localStorage?.getItem(kPreferredDeviceNameStorageKey) || null;
+    return { id, name };
   } catch {
-    return null;
+    return { id: null, name: null };
   }
 }
 
-async function savePreferredDeviceId(deviceId) {
-  if (!deviceId) return;
+function savePreferredDeviceLocalFallback(id, name) {
   try {
-    await chrome.storage.local.set({ [kPreferredDeviceStorageKey]: deviceId });
+    if (id) globalThis.localStorage?.setItem(kPreferredDeviceStorageKey, id);
+    if (name) globalThis.localStorage?.setItem(kPreferredDeviceNameStorageKey, name);
   } catch {
     // Non-fatal.
   }
+}
+
+function clearPreferredDeviceLocalFallback() {
+  try {
+    globalThis.localStorage?.removeItem(kPreferredDeviceStorageKey);
+    globalThis.localStorage?.removeItem(kPreferredDeviceNameStorageKey);
+  } catch {
+    // Non-fatal.
+  }
+}
+
+async function loadPreferredDevice() {
+  try {
+    const stored = await chrome.storage.local.get(kPreferredDeviceStorageKey);
+    const storedName = await chrome.storage.local.get(kPreferredDeviceNameStorageKey);
+    const id = typeof stored?.[kPreferredDeviceStorageKey] === 'string'
+      ? stored[kPreferredDeviceStorageKey]
+      : null;
+    const name = typeof storedName?.[kPreferredDeviceNameStorageKey] === 'string'
+      ? storedName[kPreferredDeviceNameStorageKey]
+      : null;
+    if (id || name) {
+      debugLog('preferred device from chrome.storage', { id, name });
+      return { id, name };
+    }
+    const fallback = loadPreferredDeviceLocalFallback();
+    debugLog('preferred device from localStorage fallback', fallback);
+    return fallback;
+  } catch {
+    const fallback = loadPreferredDeviceLocalFallback();
+    debugLog('preferred device fallback after storage error', fallback);
+    return fallback;
+  }
+}
+
+async function savePreferredDevice(deviceId, deviceName) {
+  if (!deviceId && !deviceName) return;
+  debugLog('saving preferred device', { deviceId: deviceId || null, deviceName: deviceName || null });
+  try {
+    const payload = {};
+    if (deviceId) payload[kPreferredDeviceStorageKey] = deviceId;
+    if (deviceName) payload[kPreferredDeviceNameStorageKey] = deviceName;
+    await chrome.storage.local.set(payload);
+  } catch {
+    // Non-fatal.
+  }
+  savePreferredDeviceLocalFallback(deviceId, deviceName);
 }
 
 async function clearPreferredDeviceId() {
+  debugLog('clearing preferred device');
   try {
-    await chrome.storage.local.remove(kPreferredDeviceStorageKey);
+    await chrome.storage.local.remove([kPreferredDeviceStorageKey, kPreferredDeviceNameStorageKey]);
   } catch {
     // Non-fatal.
   }
+  clearPreferredDeviceLocalFallback();
 }
 
 function unwrapCommand(frame) {
@@ -346,22 +395,34 @@ function waitForControlHandshake(state) {
   });
 }
 
-async function connectAndBind() {
+async function connectAndBind(options = {}) {
+  const allowChooserFallback = options.allowChooserFallback !== false;
+  const trigger = options.trigger || 'manual';
   if (connectInFlight) {
     infoLog('connect ignored: already in progress');
     return;
   }
   connectInFlight = true;
   setControlsDisabled(true);
-  infoLog('connect click');
-  notifySw('connect_click');
-  setStatus('Connecting...');
+  infoLog('connect start', { trigger, allowChooserFallback });
+  notifySw(trigger === 'auto' ? 'connect_auto_start' : 'connect_click');
+  setStatus(trigger === 'auto' ? 'Auto-connecting...' : 'Connecting...');
   const state = { pendingHandshake: null };
-  const preferredDeviceId = await loadPreferredDeviceId();
-  debugLog('preferred device', preferredDeviceId);
+  const preferred = await loadPreferredDevice();
+  if (trigger === 'auto' && typeof globalThis.navigator?.bluetooth?.getDevices === 'function') {
+    try {
+      const known = await globalThis.navigator.bluetooth.getDevices();
+      infoLog('auto-connect known devices', known.map((d) => ({ id: d?.id || null, name: d?.name || null })));
+    } catch (err) {
+      infoLog('auto-connect known devices error', String(err?.message || err));
+    }
+  }
+  debugLog('preferred device', preferred);
   try {
     const ok = await connectBle({
-      preferredDeviceId,
+      preferredDeviceId: preferred.id,
+      preferredDeviceName: preferred.name,
+      allowChooserFallback,
       onDisconnect: () => {
       infoLog('gattserverdisconnected');
       void markDisconnected('gatt_disconnected');
@@ -427,14 +488,20 @@ async function connectAndBind() {
     }
     const info = getConnectedDeviceInfo();
     infoLog('connected device info', info);
-    await savePreferredDeviceId(info.id);
+    await savePreferredDevice(info.id, info.name);
     notifySw('connect_success');
     setStatus('Connected');
     startHealthWatchdog();
   } catch (err) {
-    infoLog('connect error', String(err?.message || err));
-    notifySw('connect_error', String(err?.message || err));
-    setStatus(`Error: ${String(err?.message || err)}`);
+    const msg = String(err?.message || err);
+    infoLog('connect error', msg);
+    if (trigger === 'auto' && (msg === 'preferred_device_not_found' || msg === 'preferred_device_not_set')) {
+      notifySw('connect_auto_no_saved_match', msg);
+      setStatus('Saved device not found. Click Connect to choose.');
+      return;
+    }
+    notifySw('connect_error', msg);
+    setStatus(`Error: ${msg}`);
   } finally {
     connectInFlight = false;
     setControlsDisabled(false);
@@ -446,7 +513,7 @@ async function disconnectAndReport(detail = null) {
 }
 
 connectBtn?.addEventListener('click', () => {
-  connectAndBind();
+  connectAndBind({ allowChooserFallback: true, trigger: 'manual' });
 });
 
 disconnectBtn?.addEventListener('click', () => {
@@ -465,7 +532,7 @@ reconnectBtn?.addEventListener('click', async () => {
   infoLog('reconnect chooser click');
   await disconnectAndReport('reconnect_start');
   await clearPreferredDeviceId();
-  await connectAndBind();
+  await connectAndBind({ allowChooserFallback: true, trigger: 'manual' });
 });
 
 clearLogBtn?.addEventListener('click', () => {
@@ -500,6 +567,7 @@ notifySw('bridge_loaded');
 infoLog('bridge_loaded');
 refreshAutoscrollButton();
 refreshVerboseButton();
+
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg?.type === 'ble.sw.alive' && msg.target === 'ble-page') {

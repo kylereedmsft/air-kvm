@@ -480,6 +480,12 @@ test('service worker transfer lifecycle posts meta/chunks/done then clears on do
   assert.equal(metaPayload?.chunk_size, 160);
   assert.equal(metaPayload?.total_bytes, 5);
   assert.equal(metaPayload?.total_chunks, 1);
+  assert.equal(metaPayload?.source_width, 64);
+  assert.equal(metaPayload?.source_height, 48);
+  assert.equal(metaPayload?.encoded_width, 64);
+  assert.equal(metaPayload?.encoded_height, 48);
+  assert.equal(metaPayload?.encoded_quality, 0.55);
+  assert.equal(metaPayload?.encode_attempts, 1);
   assert.equal(harness.desktopCaptureCalls.length, 1);
   assert.equal(harness.postedBinary.length, metaPayload.total_chunks);
 

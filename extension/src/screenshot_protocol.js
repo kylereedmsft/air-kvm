@@ -63,6 +63,26 @@ export function dataUrlToMetaAndChunks(dataUrl, requestId, source, transferId, _
     total_chunks: totalChunks,
     total_bytes: totalBytes
   };
+  if (_encodeStats && typeof _encodeStats === 'object') {
+    if (Number.isInteger(_encodeStats.encodedWidth)) {
+      meta.encoded_width = _encodeStats.encodedWidth;
+    }
+    if (Number.isInteger(_encodeStats.encodedHeight)) {
+      meta.encoded_height = _encodeStats.encodedHeight;
+    }
+    if (Number.isInteger(_encodeStats.sourceWidth)) {
+      meta.source_width = _encodeStats.sourceWidth;
+    }
+    if (Number.isInteger(_encodeStats.sourceHeight)) {
+      meta.source_height = _encodeStats.sourceHeight;
+    }
+    if (typeof _encodeStats.encodedQuality === 'number' && Number.isFinite(_encodeStats.encodedQuality)) {
+      meta.encoded_quality = _encodeStats.encodedQuality;
+    }
+    if (Number.isInteger(_encodeStats.attempts)) {
+      meta.encode_attempts = _encodeStats.attempts;
+    }
+  }
 
   const chunks = [];
   for (let seq = 0; seq < totalChunks; seq += 1) {

@@ -159,17 +159,45 @@ function hasBluetooth(navigatorLike) {
 
 async function pickDevice(navigatorLike, deps = {}) {
   const preferredDeviceId = deps.preferredDeviceId || null;
+  const preferredDeviceName = deps.preferredDeviceName || null;
+  const allowChooserFallback = deps.allowChooserFallback !== false;
+  if (!allowChooserFallback && typeof navigatorLike?.bluetooth?.getDevices !== 'function') {
+    throw new Error('preferred_device_lookup_unavailable');
+  }
   if (preferredDeviceId && typeof navigatorLike?.bluetooth?.getDevices === 'function') {
     try {
       const known = await navigatorLike.bluetooth.getDevices();
+      debugLog('known devices', known.map((d) => ({ id: d?.id || null, name: d?.name || null })));
+      debugLog('preferred lookup', {
+        preferredDeviceId,
+        preferredDeviceName,
+        allowChooserFallback
+      });
       const preferred = known.find((d) => d?.id === preferredDeviceId);
       if (preferred) {
         debugLog('using preferred device', preferred.id);
         return preferred;
       }
+      if (preferredDeviceName) {
+        const byName = known.filter((d) => d?.name === preferredDeviceName);
+        if (byName.length === 1) {
+          debugLog('using preferred device by name fallback', preferredDeviceName);
+          return byName[0];
+        }
+      }
+      if (!allowChooserFallback) {
+        throw new Error('preferred_device_not_found');
+      }
     } catch (err) {
       debugLog('getDevices failed', String(err?.message || err));
+      if (!allowChooserFallback) {
+        throw err;
+      }
     }
+  }
+
+  if (!allowChooserFallback) {
+    throw new Error(preferredDeviceId ? 'preferred_device_not_found' : 'preferred_device_not_set');
   }
 
   const requestOptions = deps.requestOptions || {

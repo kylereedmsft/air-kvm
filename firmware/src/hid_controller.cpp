@@ -65,6 +65,7 @@ const uint8_t kHidReportMap[] = {
 
 constexpr uint8_t kKeyboardReportId = 1;
 constexpr uint8_t kMouseReportId = 2;
+constexpr int kMaxMouseMoveSteps = 512;
 }  // namespace
 
 namespace airkvm::fw {
@@ -101,8 +102,12 @@ void HidController::Setup(NimBLEServer* server, NimBLEAdvertising* advertising) 
 }
 
 bool HidController::SendMouseMoveRel(int dx, int dy) {
-  const bool ok = NotifyMouse(0, dx, dy, 0);
-  EmitInjectTelemetry("mouse.move_rel", ok, ok ? nullptr : "notify_failed");
+  bool step_cap_exceeded = false;
+  const bool ok = SendMouseMoveRelChunked(dx, dy, &step_cap_exceeded);
+  EmitInjectTelemetry(
+      "mouse.move_rel",
+      ok,
+      ok ? nullptr : (step_cap_exceeded ? "step_cap_exceeded" : "notify_failed"));
   return ok;
 }
 
@@ -129,6 +134,31 @@ bool HidController::SendKeyTap(const String& key) {
   const bool ok = NotifyKeyboard(modifier, code) && NotifyKeyboard(0, 0);
   EmitInjectTelemetry("key.tap", ok, ok ? nullptr : "notify_failed");
   return ok;
+}
+
+bool HidController::SendKeyType(const String& text) {
+  // Bound command runtime and BLE notification burst size.
+  if (text.length() == 0 || text.length() > 128) {
+    EmitInjectTelemetry("key.type", false, "invalid_text_length");
+    return false;
+  }
+
+  for (size_t i = 0; i < text.length(); i += 1) {
+    uint8_t modifier = 0;
+    uint8_t keycode = 0;
+    const String key = String(text.charAt(static_cast<unsigned int>(i)));
+    if (!ResolveKeyTap(key, &modifier, &keycode)) {
+      EmitInjectTelemetry("key.type", false, "invalid_char");
+      return false;
+    }
+    if (!(NotifyKeyboard(modifier, keycode) && NotifyKeyboard(0, 0))) {
+      EmitInjectTelemetry("key.type", false, "notify_failed");
+      return false;
+    }
+  }
+
+  EmitInjectTelemetry("key.type", true, nullptr);
+  return true;
 }
 
 int8_t HidController::ClampAxis(int value) {
@@ -227,6 +257,10 @@ bool HidController::ResolveKeyTap(const String& key, uint8_t* modifier, uint8_t*
       *keycode = 0x27;
       return true;
     }
+    if (c == ' ') {
+      *keycode = 0x2C;
+      return true;
+    }
   }
   return false;
 }
@@ -255,6 +289,41 @@ bool HidController::NotifyMouse(uint8_t buttons, int dx, int dy, int wheel) {
   };
   mouse_input_->setValue(report, sizeof(report));
   mouse_input_->notify();
+  return true;
+}
+
+bool HidController::SendMouseMoveRelChunked(int dx, int dy, bool* step_cap_exceeded) {
+  if (step_cap_exceeded != nullptr) {
+    *step_cap_exceeded = false;
+  }
+  int remaining_x = dx;
+  int remaining_y = dy;
+  int steps = 0;
+
+  // HID mouse axes are 8-bit signed; split long moves into bounded steps.
+  while (remaining_x != 0 || remaining_y != 0) {
+    steps += 1;
+    if (steps > kMaxMouseMoveSteps) {
+      if (step_cap_exceeded != nullptr) {
+        *step_cap_exceeded = true;
+      }
+      return false;
+    }
+
+    int step_x = remaining_x;
+    int step_y = remaining_y;
+    if (step_x > 127) step_x = 127;
+    if (step_x < -127) step_x = -127;
+    if (step_y > 127) step_y = 127;
+    if (step_y < -127) step_y = -127;
+
+    if (!NotifyMouse(0, step_x, step_y, 0)) {
+      return false;
+    }
+
+    remaining_x -= step_x;
+    remaining_y -= step_y;
+  }
   return true;
 }
 

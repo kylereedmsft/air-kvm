@@ -18,6 +18,13 @@ export function validateAgentCommand(msg) {
       return typeof msg.button === 'string' ? { ok: true } : { ok: false, error: 'invalid_mouse_click' };
     case 'key.tap':
       return typeof msg.key === 'string' ? { ok: true } : { ok: false, error: 'invalid_key_tap' };
+    case 'key.type':
+      if (typeof msg.text !== 'string' || msg.text.length < 1 || msg.text.length > 128) {
+        return { ok: false, error: 'invalid_key_type' };
+      }
+      return /^[A-Za-z0-9 ]+$/.test(msg.text)
+        ? { ok: true }
+        : { ok: false, error: 'invalid_key_type' };
     case 'state.request':
       return { ok: true };
     case 'state.set':

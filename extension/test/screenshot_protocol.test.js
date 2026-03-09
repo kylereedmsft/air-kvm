@@ -35,7 +35,14 @@ test('dataUrlToMetaAndChunks emits compact keys and chunked payload', () => {
     'r1',
     'tab',
     'tx_00000001',
-    { encodedWidth: 640, encodedHeight: 360, encodedQuality: 0.55, attempts: 2 },
+    {
+      sourceWidth: 1280,
+      sourceHeight: 720,
+      encodedWidth: 640,
+      encodedHeight: 360,
+      encodedQuality: 0.55,
+      attempts: 2
+    },
     4
   );
 
@@ -49,10 +56,12 @@ test('dataUrlToMetaAndChunks emits compact keys and chunked payload', () => {
   assert.equal(meta.total_chunks, 3);
   assert.equal(meta.total_bytes, 12);
   assert.equal(meta.total_chars, undefined);
-  assert.equal(meta.encoded_width, undefined);
-  assert.equal(meta.encoded_height, undefined);
-  assert.equal(meta.encoded_quality, undefined);
-  assert.equal(meta.encode_attempts, undefined);
+  assert.equal(meta.source_width, 1280);
+  assert.equal(meta.source_height, 720);
+  assert.equal(meta.encoded_width, 640);
+  assert.equal(meta.encoded_height, 360);
+  assert.equal(meta.encoded_quality, 0.55);
+  assert.equal(meta.encode_attempts, 2);
 
   assert.equal(chunks.length, 3);
   assert.equal(chunks[0].seq, 0);

@@ -26,11 +26,15 @@ void CommandRouter::ProcessLine(const String& line, const char* source) {
     return;
   }
 
-  HandleCommand(*cmd);
-  transport_.EmitControl("{\"ok\":true}");
+  const bool ok = HandleCommand(*cmd);
+  if (!ok) {
+    transport_.EmitControl("{\"ok\":false,\"error\":\"command_rejected\"}");
+  } else {
+    transport_.EmitControl("{\"ok\":true}");
+  }
 }
 
-void CommandRouter::HandleCommand(const airkvm::Command& cmd) {
+bool CommandRouter::HandleCommand(const airkvm::Command& cmd) {
   switch (cmd.type) {
     case airkvm::CommandType::kMouseMoveRel: {
       const bool injected = hid_.SendMouseMoveRel(cmd.dx, cmd.dy);
@@ -38,19 +42,19 @@ void CommandRouter::HandleCommand(const airkvm::Command& cmd) {
         transport_.EmitLog("hid.reject mouse.move_rel");
       }
       transport_.EmitControl("{\"type\":\"event\",\"event\":\"mouse.move_rel\"}");
-      break;
+      return injected;
     }
     case airkvm::CommandType::kMouseMoveAbs:
       transport_.EmitLog("hid.unsupported mouse.move_abs");
       transport_.EmitControl("{\"type\":\"event\",\"event\":\"mouse.move_abs\"}");
-      break;
+      return true;
     case airkvm::CommandType::kMouseClick: {
       const bool injected = hid_.SendMouseClick(cmd.button.c_str());
       if (!injected) {
         transport_.EmitLog("hid.reject mouse.click");
       }
       transport_.EmitControl("{\"type\":\"event\",\"event\":\"mouse.click\"}");
-      break;
+      return injected;
     }
     case airkvm::CommandType::kKeyTap: {
       const bool injected = hid_.SendKeyTap(cmd.key.c_str());
@@ -58,20 +62,28 @@ void CommandRouter::HandleCommand(const airkvm::Command& cmd) {
         transport_.EmitLog("hid.reject key.tap");
       }
       transport_.EmitControl("{\"type\":\"event\",\"event\":\"key.tap\"}");
-      break;
+      return injected;
+    }
+    case airkvm::CommandType::kKeyType: {
+      const bool injected = hid_.SendKeyType(cmd.text.c_str());
+      if (!injected) {
+        transport_.EmitLog("hid.reject key.type");
+      }
+      transport_.EmitControl("{\"type\":\"event\",\"event\":\"key.type\"}");
+      return injected;
     }
     case airkvm::CommandType::kStateRequest:
       transport_.EmitState(state_);
-      break;
+      return true;
     case airkvm::CommandType::kStateSet:
       state_.busy = cmd.busy;
       transport_.EmitState(state_);
-      break;
+      return true;
     case airkvm::CommandType::kFwVersionRequest:
       transport_.EmitControl(
           "{\"type\":\"fw.version\",\"version\":\"" AIRKVM_FW_VERSION
           "\",\"built_at\":\"" AIRKVM_FW_BUILT_AT "\"}");
-      break;
+      return true;
     case airkvm::CommandType::kDomSnapshotRequest:
     case airkvm::CommandType::kTabsListRequest:
     case airkvm::CommandType::kTabOpenRequest:
@@ -101,10 +113,11 @@ void CommandRouter::HandleCommand(const airkvm::Command& cmd) {
     case airkvm::CommandType::kTransferResetOk:
     case airkvm::CommandType::kTransferError:
       transport_.EmitControl(cmd.raw.c_str());
-      break;
+      return true;
     case airkvm::CommandType::kUnknown:
-      break;
+      return true;
   }
+  return true;
 }
 
 }  // namespace airkvm::fw
