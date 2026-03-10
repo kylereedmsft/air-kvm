@@ -277,3 +277,78 @@ test('StreamReceiver: invalid JSON triggers error', async () => {
   assert.equal(errors.length, 1);
   assert.equal(errors[0].code, 'json_parse_failed');
 });
+
+// ---------------------------------------------------------------------------
+// Edge case tests
+// ---------------------------------------------------------------------------
+
+test('StreamSender: concurrent sends are serialized', async () => {
+  const jsonCap = makeJsonCapture();
+  const binCap = makeBinaryCapture();
+  const sender = new StreamSender({
+    writeJsonFn: jsonCap.writeJsonFn,
+    writeBinaryFn: binCap.writeBinaryFn,
+  });
+
+  const p1 = sender.send({ id: 1 });
+  const p2 = sender.send({ id: 2 });
+  await Promise.all([p1, p2]);
+
+  assert.equal(jsonCap.messages.length, 2);
+  assert.equal(jsonCap.messages[0].id, 1);
+  assert.equal(jsonCap.messages[1].id, 2);
+});
+
+test('StreamSender: writeJsonFn error propagates', async () => {
+  const binCap = makeBinaryCapture();
+  const sender = new StreamSender({
+    writeJsonFn: async () => { throw new Error('ble_disconnected'); },
+    writeBinaryFn: binCap.writeBinaryFn,
+  });
+
+  await assert.rejects(
+    () => sender.send({ type: 'small' }),
+    /ble_disconnected/
+  );
+});
+
+test('StreamReceiver: stale transfer_id starts new transfer', async () => {
+  const cap = makeJsonCapture();
+  const receiver = new StreamReceiver({ writeJsonFn: cap.writeJsonFn });
+  const messages = [];
+  receiver.onMessage((msg) => messages.push(msg));
+
+  receiver.onChunkFrame({
+    transfer_id: 'tx_aaaa0001',
+    raw_seq: 0,
+    payload: new TextEncoder().encode('partial'),
+  });
+
+  const obj = { replaced: true };
+  receiver.onChunkFrame({
+    transfer_id: 'tx_bbbb0002',
+    raw_seq: kSeqFinalBit | 0,
+    payload: new TextEncoder().encode(JSON.stringify(obj)),
+  });
+
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0], obj);
+});
+
+test('StreamReceiver: non-Uint8Array payload sends nack', async () => {
+  const cap = makeJsonCapture();
+  const receiver = new StreamReceiver({ writeJsonFn: cap.writeJsonFn });
+  const messages = [];
+  receiver.onMessage((msg) => messages.push(msg));
+
+  receiver.onChunkFrame({
+    transfer_id: 'tx_00000099',
+    raw_seq: kSeqFinalBit | 0,
+    payload: 'not a buffer',
+  });
+
+  assert.equal(messages.length, 0);
+  const nack = cap.messages.find((m) => m.type === 'stream.nack');
+  assert.ok(nack, 'should have sent nack');
+  assert.equal(nack.reason, 'invalid_payload');
+});

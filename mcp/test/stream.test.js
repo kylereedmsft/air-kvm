@@ -468,3 +468,135 @@ test('Integration: sender and receiver complete a chunked transfer', async () =>
   assert.equal(received.length, 1);
   assert.deepEqual(received[0], bigObj);
 });
+
+// ---------------------------------------------------------------------------
+// Edge case tests
+// ---------------------------------------------------------------------------
+
+test('StreamSender: concurrent sends are serialized by queue', async () => {
+  const jsonCap = makeJsonCapture();
+  const binCap = makeBinaryCapture();
+  const sender = new StreamSender({
+    writeJsonFn: jsonCap.writeJsonFn,
+    writeBinaryFn: binCap.writeBinaryFn,
+  });
+
+  // Both are small enough for inline JSON path — no acks needed.
+  const p1 = sender.send({ id: 1 });
+  const p2 = sender.send({ id: 2 });
+  await Promise.all([p1, p2]);
+
+  assert.equal(jsonCap.messages.length, 2);
+  assert.equal(jsonCap.messages[0].id, 1);
+  assert.equal(jsonCap.messages[1].id, 2);
+});
+
+test('StreamSender: writeJsonFn error propagates', async () => {
+  const binCap = makeBinaryCapture();
+  const sender = new StreamSender({
+    writeJsonFn: async () => { throw new Error('ble_disconnected'); },
+    writeBinaryFn: binCap.writeBinaryFn,
+  });
+
+  await assert.rejects(
+    () => sender.send({ type: 'small' }),
+    /ble_disconnected/
+  );
+});
+
+test('StreamSender: writeBinaryFn error propagates through retry', async () => {
+  const jsonCap = makeJsonCapture();
+  const sender = new StreamSender({
+    writeJsonFn: jsonCap.writeJsonFn,
+    writeBinaryFn: async () => { throw new Error('ble_write_failed'); },
+    chunkSize: 10,
+    maxRetries: 0,
+    ackTimeoutMs: 50,
+  });
+
+  await assert.rejects(
+    () => sender.send({ data: 'x'.repeat(50) }),
+    /chunk_send_failed/
+  );
+});
+
+test('StreamSender: payload exactly at chunkSize goes inline', async () => {
+  const jsonCap = makeJsonCapture();
+  const binCap = makeBinaryCapture();
+  const chunkSize = 200;
+  const sender = new StreamSender({
+    writeJsonFn: jsonCap.writeJsonFn,
+    writeBinaryFn: binCap.writeBinaryFn,
+    chunkSize,
+  });
+
+  // Make an object whose JSON serialization is exactly chunkSize bytes.
+  const overhead = Buffer.byteLength(JSON.stringify({ d: '' }));
+  const padLen = chunkSize - overhead;
+  const obj = { d: 'A'.repeat(padLen) };
+  assert.equal(Buffer.byteLength(JSON.stringify(obj)), chunkSize);
+
+  await sender.send(obj);
+  assert.equal(jsonCap.messages.length, 1, 'should use inline path');
+  assert.equal(binCap.frames.length, 0, 'no binary frames');
+});
+
+test('StreamReceiver: stale transfer_id chunk starts new transfer', async () => {
+  const cap = makeJsonCapture();
+  const receiver = new StreamReceiver({ writeJsonFn: cap.writeJsonFn });
+  const messages = [];
+  receiver.onMessage((msg) => messages.push(msg));
+
+  // Start a transfer with id A.
+  receiver.onChunkFrame({
+    transfer_id: 'tx_aaaa0001',
+    raw_seq: 0,
+    payload: Buffer.from('partial'),
+  });
+
+  // New transfer with id B arrives — should abandon A and start B.
+  const obj = { after: 'stale' };
+  receiver.onChunkFrame({
+    transfer_id: 'tx_bbbb0002',
+    raw_seq: kSeqFinalBit | 0,
+    payload: Buffer.from(JSON.stringify(obj)),
+  });
+
+  assert.equal(messages.length, 1);
+  assert.deepEqual(messages[0], obj);
+});
+
+test('StreamReceiver: non-Uint8Array payload sends nack', async () => {
+  const cap = makeJsonCapture();
+  const receiver = new StreamReceiver({ writeJsonFn: cap.writeJsonFn });
+  const messages = [];
+  receiver.onMessage((msg) => messages.push(msg));
+
+  receiver.onChunkFrame({
+    transfer_id: 'tx_00000099',
+    raw_seq: kSeqFinalBit | 0,
+    payload: 'not a buffer',
+  });
+
+  assert.equal(messages.length, 0, 'should not deliver');
+  const nack = cap.messages.find((m) => m.type === 'stream.nack');
+  assert.ok(nack, 'should have sent nack');
+  assert.equal(nack.reason, 'invalid_payload');
+});
+
+test('StreamReceiver: empty payload (zero bytes) is handled', async () => {
+  const cap = makeJsonCapture();
+  const receiver = new StreamReceiver({ writeJsonFn: cap.writeJsonFn });
+  const errors = [];
+  receiver.onError((err) => errors.push(err));
+
+  receiver.onChunkFrame({
+    transfer_id: 'tx_00000077',
+    raw_seq: kSeqFinalBit | 0,
+    payload: Buffer.alloc(0),
+  });
+
+  // Empty buffer can't be valid JSON, should trigger error.
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].code, 'json_parse_failed');
+});
