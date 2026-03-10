@@ -6,6 +6,11 @@
 #include "transport_mux.hpp"
 
 namespace {
+// Delay between consecutive BLE HID notifications (ms).  Must exceed the
+// typical BLE connection interval (7.5-30 ms) so the host OS processes each
+// press/release as a distinct event and key-repeat does not latch.
+constexpr unsigned long kHidReportDelayMs = 8;
+
 // Keyboard report (ID 1) + mouse report (ID 2).
 const uint8_t kHidReportMap[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
@@ -131,9 +136,18 @@ bool HidController::SendKeyTap(const String& key) {
     return false;
   }
 
-  const bool ok = NotifyKeyboard(modifier, code) && NotifyKeyboard(0, 0);
-  EmitInjectTelemetry("key.tap", ok, ok ? nullptr : "notify_failed");
-  return ok;
+  if (!NotifyKeyboard(modifier, code)) {
+    EmitInjectTelemetry("key.tap", false, "notify_failed");
+    return false;
+  }
+  delay(kHidReportDelayMs);
+  const bool released = NotifyKeyboard(0, 0);
+  if (!released) {
+    EmitInjectTelemetry("key.tap", false, "notify_failed");
+    return false;
+  }
+  EmitInjectTelemetry("key.tap", true, nullptr);
+  return true;
 }
 
 bool HidController::SendKeyType(const String& text) {
@@ -151,10 +165,16 @@ bool HidController::SendKeyType(const String& text) {
       EmitInjectTelemetry("key.type", false, "invalid_char");
       return false;
     }
-    if (!(NotifyKeyboard(modifier, keycode) && NotifyKeyboard(0, 0))) {
+    if (!NotifyKeyboard(modifier, keycode)) {
       EmitInjectTelemetry("key.type", false, "notify_failed");
       return false;
     }
+    delay(kHidReportDelayMs);
+    if (!NotifyKeyboard(0, 0)) {
+      EmitInjectTelemetry("key.type", false, "notify_failed");
+      return false;
+    }
+    delay(kHidReportDelayMs);
   }
 
   EmitInjectTelemetry("key.type", true, nullptr);
