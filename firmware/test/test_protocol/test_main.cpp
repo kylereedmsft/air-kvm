@@ -24,6 +24,14 @@ void test_parse_key_type() {
   TEST_ASSERT_EQUAL_STRING("Bluetooth", cmd->text.c_str());
 }
 
+void test_parse_key_type_escaped_text() {
+  const auto cmd = airkvm::ParseCommandLine(
+      "{\"type\":\"key.type\",\"text\":\"\\\"\\\\\"}");
+  TEST_ASSERT_TRUE(cmd.has_value());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(airkvm::CommandType::kKeyType), static_cast<int>(cmd->type));
+  TEST_ASSERT_EQUAL_STRING("\"\\", cmd->text.c_str());
+}
+
 void test_invalid_command() {
   const auto cmd = airkvm::ParseCommandLine("{\"foo\":\"bar\"}");
   TEST_ASSERT_FALSE(cmd.has_value());
@@ -135,6 +143,7 @@ int main(int, char**) {
   RUN_TEST(test_parse_mouse_move_rel);
   RUN_TEST(test_parse_key_tap);
   RUN_TEST(test_parse_key_type);
+  RUN_TEST(test_parse_key_type_escaped_text);
   RUN_TEST(test_invalid_command);
   RUN_TEST(test_parse_state_set);
   RUN_TEST(test_parse_fw_version_request);

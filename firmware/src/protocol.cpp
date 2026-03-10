@@ -27,9 +27,55 @@ std::string ExtractString(const std::string& s, const std::string& key) {
   const auto pos = s.find(pattern);
   if (pos == std::string::npos) return "";
   const auto start = pos + pattern.size();
-  const auto end = s.find('"', start);
-  if (end == std::string::npos) return "";
-  return s.substr(start, end - start);
+  std::string out;
+  out.reserve(32);
+  bool escape = false;
+  for (size_t i = start; i < s.size(); ++i) {
+    const char c = s[i];
+    if (escape) {
+      switch (c) {
+        case '"':
+          out.push_back('"');
+          break;
+        case '\\':
+          out.push_back('\\');
+          break;
+        case '/':
+          out.push_back('/');
+          break;
+        case 'b':
+          out.push_back('\b');
+          break;
+        case 'f':
+          out.push_back('\f');
+          break;
+        case 'n':
+          out.push_back('\n');
+          break;
+        case 'r':
+          out.push_back('\r');
+          break;
+        case 't':
+          out.push_back('\t');
+          break;
+        default:
+          // Keep unknown escapes literal for robustness.
+          out.push_back(c);
+          break;
+      }
+      escape = false;
+      continue;
+    }
+    if (c == '\\') {
+      escape = true;
+      continue;
+    }
+    if (c == '"') {
+      return out;
+    }
+    out.push_back(c);
+  }
+  return "";
 }
 
 bool ExtractBool(const std::string& s, const std::string& key, bool fallback) {

@@ -11,7 +11,7 @@ namespace {
 // Delay between consecutive BLE HID notifications (ms).  Must exceed the
 // typical BLE connection interval (7.5-30 ms) so the host OS processes each
 // press/release as a distinct event and key-repeat does not latch.
-constexpr unsigned long kHidReportDelayMs = 8;
+constexpr unsigned long kHidReportDelayMs = 12;
 
 // Keyboard report (ID 1) + mouse report (ID 2).
 const uint8_t kHidReportMap[] = {
