@@ -137,21 +137,17 @@ Messages that fit within a single chunk (most control commands, tab lists, simpl
 
 ### Implementation Phases
 
-#### Phase 1 — Stream layer in MCP and extension
+#### Phase 1 — Stream layer in MCP and extension ✅
 
-New files:
-- `mcp/src/stream.js` — sender/receiver stream layer for UART side
-- `extension/src/stream.js` — sender/receiver stream layer for BLE side
+Implemented: `mcp/src/stream.js`, `extension/src/stream.js` with full test coverage.
 
-Stream layer API (both sides):
-```js
-stream.send(object)         // chunks, sends one at a time, waits for acks
-stream.reset()              // clears all state
-stream.onMessage(callback)  // called with reassembled objects
-stream.onError(callback)    // called on unrecoverable transfer failure
-```
-
-Internally manages: chunking, seq numbering, transfer_id generation, ack tracking, timeout/retry, reassembly, duplicate detection.
+- `StreamSender`: serializes → chunks if >chunkSize → sends one chunk at a time → waits for ack → retries on timeout/nack (3 attempts, 3s) → rejects on failure
+- `StreamReceiver`: single `_rx` variable (one transfer at a time) → reassembles → delivers parsed object
+- `is_final` encoded in high bit of seq field (bit 31)
+- Small messages (<= chunkSize) go inline as control frames, no chunking overhead
+- Duplicate chunks during a transfer are idempotent (re-ack, don't double-append)
+- `stream.reset` clears all state
+- Extension variant uses `Uint8Array` + separate `writeJsonFn`/`writeBinaryFn`; MCP variant uses `Buffer` + single `writeFn`
 
 #### Phase 2 — Firmware stream awareness
 

@@ -363,6 +363,27 @@ std::optional<Command> ParseCommandLine(const std::string& line) {
     return cmd;
   }
 
+  if (Contains(line, "\"type\":\"stream.ack\"")) {
+    cmd.type = CommandType::kStreamAck;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"stream.nack\"")) {
+    cmd.type = CommandType::kStreamNack;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
+  if (Contains(line, "\"type\":\"stream.reset\"")) {
+    cmd.type = CommandType::kStreamReset;
+    cmd.request_id = ExtractString(line, "request_id");
+    cmd.raw = line;
+    return cmd;
+  }
+
   return std::nullopt;
 }
 

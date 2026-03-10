@@ -47,6 +47,9 @@ enum class CommandType {
   kTransferReset,
   kTransferResetOk,
   kTransferError,
+  kStreamAck,
+  kStreamNack,
+  kStreamReset,
 };
 
 struct Command {

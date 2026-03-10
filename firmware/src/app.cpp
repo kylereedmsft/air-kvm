@@ -157,6 +157,25 @@ void AirKvmApp::ProcessBleWrite(const std::string& value) {
     transport_.EmitBinaryFrame(
         reinterpret_cast<const uint8_t*>(value.data()),
         value.size());
+    // Generate stream.ack back to BLE sender.
+    // Extract transfer_id (bytes 4-7 LE) and seq (bytes 8-11 LE) from the AK frame.
+    if (value.size() >= kTransferMinFrameLen) {
+      const auto* b = reinterpret_cast<const uint8_t*>(value.data());
+      const uint32_t tid = static_cast<uint32_t>(b[4]) |
+                           (static_cast<uint32_t>(b[5]) << 8) |
+                           (static_cast<uint32_t>(b[6]) << 16) |
+                           (static_cast<uint32_t>(b[7]) << 24);
+      const uint32_t raw_seq = static_cast<uint32_t>(b[8]) |
+                               (static_cast<uint32_t>(b[9]) << 8) |
+                               (static_cast<uint32_t>(b[10]) << 16) |
+                               (static_cast<uint32_t>(b[11]) << 24);
+      const uint32_t seq = raw_seq & 0x7FFFFFFFu;
+      char ack[128];
+      snprintf(ack, sizeof(ack),
+               "{\"type\":\"stream.ack\",\"transfer_id\":\"tx_%08x\",\"seq\":%u}",
+               tid, seq);
+      transport_.ForwardControlToBle(ack);
+    }
     return;
   }
 

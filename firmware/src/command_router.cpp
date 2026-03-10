@@ -41,6 +41,9 @@ bool IsBridgePassthroughType(airkvm::CommandType type) {
     case airkvm::CommandType::kTransferReset:
     case airkvm::CommandType::kTransferResetOk:
     case airkvm::CommandType::kTransferError:
+    case airkvm::CommandType::kStreamAck:
+    case airkvm::CommandType::kStreamNack:
+    case airkvm::CommandType::kStreamReset:
       return true;
     default:
       return false;
@@ -171,7 +174,10 @@ bool CommandRouter::HandleCommand(const airkvm::Command& cmd, const char* source
     case airkvm::CommandType::kTransferCancelOk:
     case airkvm::CommandType::kTransferReset:
     case airkvm::CommandType::kTransferResetOk:
-    case airkvm::CommandType::kTransferError: {
+    case airkvm::CommandType::kTransferError:
+    case airkvm::CommandType::kStreamAck:
+    case airkvm::CommandType::kStreamNack:
+    case airkvm::CommandType::kStreamReset: {
       const bool from_ble = source != nullptr && String(source) == "ble";
       if (from_ble) {
         transport_.EmitControlUartOnly(cmd.raw.c_str());

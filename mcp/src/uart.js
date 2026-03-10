@@ -1,5 +1,6 @@
 import { SerialPort } from 'serialport';
 import { tryExtractFrameFromBuffer } from './binary_frame.js';
+import { StreamReceiver } from './stream.js';
 
 const kMagic0 = 0x41;
 const kMagic1 = 0x4b;
@@ -354,6 +355,76 @@ export class UartTransport {
               finish(resolve, { ok: msg.ok, msg, frames });
             }
           }
+        };
+      });
+    };
+
+    const scheduled = this.sendQueue.then(run, run);
+    this.sendQueue = scheduled.catch(() => {});
+    return scheduled;
+  }
+
+  // Stream-based request: sends a command and returns the complete response
+  // assembled by the stream layer (handles chunked binary transfers transparently).
+  async streamRequest(command, { timeoutMs = this.commandTimeoutMs } = {}) {
+    const run = async () => {
+      await this.open();
+      await this.writeRawCommand(command);
+
+      return new Promise((resolve, reject) => {
+        let timer = null;
+        let finished = false;
+
+        const receiver = new StreamReceiver({
+          writeJsonFn: async (obj) => {
+            await this.writeRawCommand(obj);
+          },
+        });
+
+        receiver.onMessage((msg) => {
+          if (finished) return;
+          finish(resolve, { ok: true, data: msg });
+        });
+
+        receiver.onError((err) => {
+          if (finished) return;
+          finish(reject, new Error(`stream_error:${err.code}`));
+        });
+
+        const armTimer = (ms) => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => {
+            if (finished) return;
+            finish(reject, new Error('device_timeout'));
+          }, ms);
+        };
+
+        const finish = (fn, value) => {
+          if (finished) return;
+          finished = true;
+          if (timer) clearTimeout(timer);
+          this.currentWaiter = null;
+          receiver.reset();
+          fn(value);
+        };
+
+        armTimer(timeoutMs);
+
+        this.currentWaiter = {
+          reject,
+          onFrame: (frame) => {
+            if (finished) return;
+            armTimer(timeoutMs);
+            if (frame.kind === 'bin') {
+              receiver.onChunkFrame({
+                transfer_id: frame.transfer_id,
+                raw_seq: frame.seq,
+                payload: frame.payload,
+              });
+            } else if (frame.kind === 'ctrl' || frame.kind === 'legacy_ctrl') {
+              receiver.onControlFrame(frame.msg);
+            }
+          },
         };
       });
     };
