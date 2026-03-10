@@ -7,6 +7,60 @@
 
 namespace airkvm::fw {
 
+namespace {
+bool IsBridgePassthroughType(airkvm::CommandType type) {
+  switch (type) {
+    case airkvm::CommandType::kDomSnapshotRequest:
+    case airkvm::CommandType::kTabsListRequest:
+    case airkvm::CommandType::kWindowBoundsRequest:
+    case airkvm::CommandType::kTabOpenRequest:
+    case airkvm::CommandType::kJsExecRequest:
+    case airkvm::CommandType::kScreenshotRequest:
+    case airkvm::CommandType::kDomSnapshot:
+    case airkvm::CommandType::kTabsList:
+    case airkvm::CommandType::kWindowBounds:
+    case airkvm::CommandType::kTabOpen:
+    case airkvm::CommandType::kTabOpenError:
+    case airkvm::CommandType::kJsExecResult:
+    case airkvm::CommandType::kJsExecError:
+    case airkvm::CommandType::kTabsListError:
+    case airkvm::CommandType::kDomSnapshotError:
+    case airkvm::CommandType::kWindowBoundsError:
+    case airkvm::CommandType::kScreenshotMeta:
+    case airkvm::CommandType::kScreenshotChunk:
+    case airkvm::CommandType::kScreenshotError:
+    case airkvm::CommandType::kTransferMeta:
+    case airkvm::CommandType::kTransferChunk:
+    case airkvm::CommandType::kTransferDone:
+    case airkvm::CommandType::kTransferDoneAck:
+    case airkvm::CommandType::kTransferAck:
+    case airkvm::CommandType::kTransferNack:
+    case airkvm::CommandType::kTransferResume:
+    case airkvm::CommandType::kTransferCancel:
+    case airkvm::CommandType::kTransferCancelOk:
+    case airkvm::CommandType::kTransferReset:
+    case airkvm::CommandType::kTransferResetOk:
+    case airkvm::CommandType::kTransferError:
+      return true;
+    default:
+      return false;
+  }
+}
+
+const char* ForwardResultCode(TransportMux::BleForwardResult result) {
+  switch (result) {
+    case TransportMux::BleForwardResult::kSent:
+      return "sent";
+    case TransportMux::BleForwardResult::kNoCharacteristic:
+      return "no_characteristic";
+    case TransportMux::BleForwardResult::kNotifyFailed:
+      return "notify_failed";
+    default:
+      return "unknown";
+  }
+}
+}  // namespace
+
 CommandRouter::CommandRouter(TransportMux& transport, DeviceState& state, HidController& hid)
     : transport_(transport), state_(state), hid_(hid) {}
 
@@ -27,10 +81,13 @@ void CommandRouter::ProcessLine(const String& line, const char* source) {
   }
 
   const bool ok = HandleCommand(*cmd, source);
-  if (!ok) {
-    transport_.EmitControl("{\"ok\":false,\"error\":\"command_rejected\"}");
-  } else {
-    transport_.EmitControl("{\"ok\":true}");
+  const bool is_passthrough = IsBridgePassthroughType(cmd->type);
+  if (!is_passthrough) {
+    if (!ok) {
+      transport_.EmitControl("{\"ok\":false,\"error\":\"command_rejected\"}");
+    } else {
+      transport_.EmitControl("{\"ok\":true}");
+    }
   }
 }
 
@@ -119,7 +176,19 @@ bool CommandRouter::HandleCommand(const airkvm::Command& cmd, const char* source
       if (from_ble) {
         transport_.EmitControlUartOnly(cmd.raw.c_str());
       } else {
-        transport_.EmitControl(cmd.raw.c_str());
+        transport_.EmitControlUartOnly(cmd.raw.c_str());
+        const auto forwarded = transport_.ForwardControlToBle(cmd.raw.c_str());
+        if (forwarded != TransportMux::BleForwardResult::kSent) {
+          const String request_id = String(cmd.request_id.c_str());
+          const String error =
+              String("{\"ok\":false,\"request_id\":\"") + request_id +
+              "\",\"error\":\"downstream_not_delivered\",\"detail\":\"" +
+              ForwardResultCode(forwarded) + "\"}";
+          transport_.EmitControlUartOnly(error.c_str());
+          transport_.EmitLog(
+              String("{\"evt\":\"bridge.forward.fail\",\"request_id\":\"") + request_id +
+              "\",\"detail\":\"" + ForwardResultCode(forwarded) + "\"}");
+        }
       }
       return true;
     }

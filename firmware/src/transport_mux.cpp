@@ -48,6 +48,18 @@ String ExtractTypeField(const char* payload) {
   return String(raw.substr(value_start, value_end - value_start).c_str());
 }
 
+String ExtractRequestIdField(const char* payload) {
+  if (payload == nullptr) return String("");
+  const std::string raw(payload);
+  const std::string needle = "\"request_id\":\"";
+  const size_t start = raw.find(needle);
+  if (start == std::string::npos) return String("");
+  const size_t value_start = start + needle.size();
+  const size_t value_end = raw.find('"', value_start);
+  if (value_end == std::string::npos || value_end <= value_start) return String("");
+  return String(raw.substr(value_start, value_end - value_start).c_str());
+}
+
 bool ShouldTraceBleControlForward(const String& type) {
   return type.startsWith("transfer.") || type == "screenshot.request" || type == "state.request";
 }
@@ -253,13 +265,14 @@ void TransportMux::EmitFrameDirect(const TxFrame& frame) {
   Serial.println(frame.uart_line);
 }
 
-void TransportMux::EmitBleControl(const char* payload) {
-  if (payload == nullptr) return;
+TransportMux::BleForwardResult TransportMux::EmitBleControl(const char* payload) {
+  if (payload == nullptr) return BleForwardResult::kNotifyFailed;
   if (tx_char_ == nullptr) {
     EmitLog(BuildBleNotifyTelemetry(0, "no_characteristic"));
-    return;
+    return BleForwardResult::kNoCharacteristic;
   }
   const String type = ExtractTypeField(payload);
+  const String request_id = ExtractRequestIdField(payload);
   std::string ble_payload(payload);
   ble_payload.push_back('\n');
   tx_char_->setValue(
@@ -267,8 +280,15 @@ void TransportMux::EmitBleControl(const char* payload) {
   tx_char_->notify();
   EmitLog(BuildBleNotifyTelemetry(ble_payload.size(), "attempted"));
   if (ShouldTraceBleControlForward(type)) {
-    EmitLog(String("ble.ctrl_notify_sent type=") + type);
+    EmitLog(
+        String("{\"evt\":\"ble.ctrl_notify_sent\",\"type\":\"") + type +
+        "\",\"request_id\":\"" + JsonEscape(request_id) + "\"}");
   }
+  return BleForwardResult::kSent;
+}
+
+TransportMux::BleForwardResult TransportMux::ForwardControlToBle(const char* payload) {
+  return EmitBleControl(payload);
 }
 
 #if defined(ESP32)
