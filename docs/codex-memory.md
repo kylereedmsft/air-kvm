@@ -30,8 +30,7 @@
   - Lifecycle uses `transfer.meta` -> binary chunks -> `transfer.done` -> `transfer.done.ack`.
   - MCP drives flow control with `transfer.ack`, `transfer.nack`, `transfer.resume`.
   - Extension enforces one active screenshot transfer session.
-- BLE control continuation:
-  - Oversized BLE control payloads use `ctrl.chunk`; extension reassembles before dispatch.
+- BLE control payloads remain standard JSON control lines; large responses use transfer/binary streaming.
 
 ## Logging Defaults
 - Bridge page logging defaults to low-noise mode.

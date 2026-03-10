@@ -19,6 +19,9 @@ const kJsExecErrorMaxChars = 300;
 const kJsExecPostTimeoutHoldMs = 1000;
 const kSwHeartbeatIntervalMs = 5000;
 const kSwBreadcrumbStorageKey = 'airkvm_sw_breadcrumb';
+const kCdpProtocolVersion = '1.3';
+const kDomSnapshotActionableLimitPerFrame = 50;
+const kDomSnapshotMaxTransferBytes = 2 * 1024 * 1024;
 let lastAutomationTabId = null;
 let bridgeTraceSeq = 0;
 let screenshotInFlight = false;
@@ -170,6 +173,180 @@ async function resolveTargetTab(preferredTabId = null) {
   return null;
 }
 
+function makeDebuggerTarget(tabId) {
+  return { tabId };
+}
+
+function attachDebugger(target) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.attach(target, kCdpProtocolVersion, () => {
+      if (chrome.runtime?.lastError) {
+        reject(new Error(chrome.runtime.lastError.message || 'cdp_attach_failed'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function detachDebugger(target) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.detach(target, () => {
+      if (chrome.runtime?.lastError) {
+        reject(new Error(chrome.runtime.lastError.message || 'cdp_detach_failed'));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function sendDebuggerCommand(target, method, params = {}) {
+  return new Promise((resolve, reject) => {
+    chrome.debugger.sendCommand(target, method, params, (result) => {
+      if (chrome.runtime?.lastError) {
+        reject(new Error(chrome.runtime.lastError.message || `cdp_${method}_failed`));
+        return;
+      }
+      resolve(result || {});
+    });
+  });
+}
+
+async function withCdpSession(tabId, run) {
+  if (!chrome?.debugger?.attach || !chrome?.debugger?.sendCommand || !chrome?.debugger?.detach) {
+    throw new Error('cdp_unavailable');
+  }
+  const target = makeDebuggerTarget(tabId);
+  await attachDebugger(target);
+  try {
+    return await run({
+      sendCommand: (method, params) => sendDebuggerCommand(target, method, params)
+    });
+  } finally {
+    try {
+      await detachDebugger(target);
+    } catch (err) {
+      debugLog('cdp detach failed', { tabId, detail: String(err?.message || err) });
+    }
+  }
+}
+
+function collectFrameIds(frameTreeNode, out = []) {
+  const frameId = frameTreeNode?.frame?.id;
+  if (typeof frameId === 'string' && frameId.length > 0) {
+    out.push(frameId);
+  }
+  const children = Array.isArray(frameTreeNode?.childFrames) ? frameTreeNode.childFrames : [];
+  for (const child of children) {
+    collectFrameIds(child, out);
+  }
+  return out;
+}
+
+function buildFrameSummaryExpression(maxActionable) {
+  return `(() => {
+    const __airkvm_dom_summary_limit = ${maxActionable};
+    const __airkvm_els = Array.from(
+      document.querySelectorAll('a,button,input,select,textarea,[role="button"]')
+    ).slice(0, __airkvm_dom_summary_limit);
+    const __airkvm_focus = document.activeElement;
+    const __airkvm_focusTag = __airkvm_focus?.tagName ? String(__airkvm_focus.tagName).toLowerCase() : null;
+    const __airkvm_focusId = __airkvm_focus?.id ? String(__airkvm_focus.id) : null;
+    return {
+      __airkvm_dom_summary: true,
+      url: String(location.href || ''),
+      title: String(document.title || ''),
+      focus: { tag: __airkvm_focusTag, id: __airkvm_focusId },
+      actionable: __airkvm_els.map((el) => ({
+        tag: el?.tagName ? String(el.tagName).toLowerCase() : null,
+        id: el?.id ? String(el.id) : null,
+        role: el?.getAttribute ? (el.getAttribute('role') || null) : null,
+        type: typeof el?.type === 'string' ? el.type : null,
+        text: String(el?.innerText || el?.value || '').trim().slice(0, 120)
+      }))
+    };
+  })()`;
+}
+
+function buildJsExecExpression(script, maxResultChars) {
+  const encodedScript = JSON.stringify(script);
+  return `(() => {
+    const __airkvm_script = ${encodedScript};
+    const __airkvm_max_chars = ${maxResultChars};
+    function __airkvm_value_type_of(value) {
+      if (value === null) return 'null';
+      if (Array.isArray(value)) return 'array';
+      return typeof value;
+    }
+    function __airkvm_safe_serialize(value) {
+      const seen = new WeakSet();
+      const typedLiteral = (kind, payload = null) => JSON.stringify({
+        __airkvm_type: kind,
+        value: payload
+      });
+      if (typeof value === 'undefined') return typedLiteral('undefined');
+      if (typeof value === 'function') return typedLiteral('function', value.name || null);
+      if (typeof value === 'symbol') return typedLiteral('symbol', String(value));
+      if (typeof value === 'bigint') return typedLiteral('bigint', value.toString());
+      try {
+        const encoded = JSON.stringify(value, (_key, candidate) => {
+          if (typeof candidate === 'undefined') return { __airkvm_type: 'undefined' };
+          if (typeof candidate === 'function') {
+            return { __airkvm_type: 'function', value: candidate.name || null };
+          }
+          if (typeof candidate === 'symbol') return { __airkvm_type: 'symbol', value: String(candidate) };
+          if (typeof candidate === 'bigint') return { __airkvm_type: 'bigint', value: candidate.toString() };
+          if (candidate && typeof candidate === 'object') {
+            if (seen.has(candidate)) return { __airkvm_type: 'circular' };
+            seen.add(candidate);
+          }
+          return candidate;
+        });
+        return typeof encoded === 'string' ? encoded : 'null';
+      } catch (err) {
+        return typedLiteral('unserializable', String(err?.message || err));
+      }
+    }
+    return (async () => {
+      let compiled = null;
+      try {
+        compiled = new Function(__airkvm_script);
+      } catch (err) {
+        return {
+          ok: false,
+          error_code: 'js_exec_compile_error',
+          error: String(err?.message || err)
+        };
+      }
+      try {
+        let value = compiled();
+        if (value && typeof value.then === 'function') {
+          value = await value;
+        }
+        let valueJson = __airkvm_safe_serialize(value);
+        let truncated = false;
+        if (valueJson.length > __airkvm_max_chars) {
+          valueJson = valueJson.slice(0, __airkvm_max_chars);
+          truncated = true;
+        }
+        return {
+          ok: true,
+          value_type: __airkvm_value_type_of(value),
+          value_json: valueJson,
+          truncated
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error_code: 'js_exec_runtime_error',
+          error: String(err?.message || err)
+        };
+      }
+    })();
+  })()`;
+}
+
 async function postEventViaBridge(payload) {
   bridgeTraceSeq += 1;
   const traceId = `sw-${Date.now()}-${bridgeTraceSeq}`;
@@ -313,86 +490,47 @@ function normalizeJsExecCommand(command) {
   };
 }
 
-async function executeScriptInMainWorld(tabId, script, maxResultChars) {
-  const results = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: async (userScript, maxChars) => {
-      function valueTypeOf(value) {
-        if (value === null) return 'null';
-        if (Array.isArray(value)) return 'array';
-        return typeof value;
-      }
-
-      function safeSerialize(value) {
-        const seen = new WeakSet();
-        const typedLiteral = (kind, payload = null) => JSON.stringify({
-          __airkvm_type: kind,
-          value: payload
+async function executeScriptViaCdp(tabId, script, maxResultChars) {
+  return withCdpSession(tabId, async ({ sendCommand }) => {
+    await sendCommand('Page.enable');
+    const frameTree = await sendCommand('Page.getFrameTree');
+    const mainFrameId = frameTree?.frameTree?.frame?.id || null;
+    let contextId = null;
+    if (typeof mainFrameId === 'string' && mainFrameId.length > 0) {
+      try {
+        const world = await sendCommand('Page.createIsolatedWorld', {
+          frameId: mainFrameId,
+          worldName: 'airkvm_js_exec'
         });
-        if (typeof value === 'undefined') return typedLiteral('undefined');
-        if (typeof value === 'function') return typedLiteral('function', value.name || null);
-        if (typeof value === 'symbol') return typedLiteral('symbol', String(value));
-        if (typeof value === 'bigint') return typedLiteral('bigint', value.toString());
-        try {
-          const encoded = JSON.stringify(value, (_key, candidate) => {
-            if (typeof candidate === 'undefined') return { __airkvm_type: 'undefined' };
-            if (typeof candidate === 'function') {
-              return { __airkvm_type: 'function', value: candidate.name || null };
-            }
-            if (typeof candidate === 'symbol') return { __airkvm_type: 'symbol', value: String(candidate) };
-            if (typeof candidate === 'bigint') return { __airkvm_type: 'bigint', value: candidate.toString() };
-            if (candidate && typeof candidate === 'object') {
-              if (seen.has(candidate)) return { __airkvm_type: 'circular' };
-              seen.add(candidate);
-            }
-            return candidate;
-          });
-          return typeof encoded === 'string' ? encoded : 'null';
-        } catch (err) {
-          return typedLiteral('unserializable', String(err?.message || err));
-        }
+        contextId = Number.isInteger(world?.executionContextId) ? world.executionContextId : null;
+      } catch {
+        contextId = null;
       }
+    }
 
-      let compiled = null;
-      try {
-        compiled = new Function(userScript);
-      } catch (err) {
-        return {
-          ok: false,
-          error_code: 'js_exec_compile_error',
-          error: String(err?.message || err)
-        };
-      }
-
-      try {
-        let value = compiled();
-        if (value && typeof value.then === 'function') {
-          value = await value;
-        }
-        let valueJson = safeSerialize(value);
-        let truncated = false;
-        if (valueJson.length > maxChars) {
-          valueJson = valueJson.slice(0, maxChars);
-          truncated = true;
-        }
-        return {
-          ok: true,
-          value_type: valueTypeOf(value),
-          value_json: valueJson,
-          truncated
-        };
-      } catch (err) {
-        return {
-          ok: false,
-          error_code: 'js_exec_runtime_error',
-          error: String(err?.message || err)
-        };
-      }
-    },
-    args: [script, maxResultChars]
+    const evalResult = await sendCommand('Runtime.evaluate', {
+      expression: buildJsExecExpression(script, maxResultChars),
+      awaitPromise: true,
+      returnByValue: true,
+      ...(Number.isInteger(contextId) ? { contextId } : {})
+    });
+    if (evalResult?.exceptionDetails) {
+      const detail = String(
+        evalResult.exceptionDetails?.text
+          || evalResult.result?.description
+          || 'cdp_runtime_evaluate_failed'
+      );
+      return {
+        ok: false,
+        error_code: 'js_exec_runtime_error',
+        error: detail
+      };
+    }
+    if (evalResult?.result && Object.prototype.hasOwnProperty.call(evalResult.result, 'value')) {
+      return evalResult.result.value;
+    }
+    return null;
   });
-  return Array.isArray(results) && results.length > 0 ? results[0]?.result : null;
 }
 
 async function postJsExecError(requestId, tabId, startedAt, errorCode, message) {
@@ -428,7 +566,7 @@ async function sendJsExec(command) {
     }
     resolvedTabId = tab.id;
     lastAutomationTabId = tab.id;
-    const executionPromise = executeScriptInMainWorld(tab.id, normalized.script, normalized.maxResultChars);
+    const executionPromise = executeScriptViaCdp(tab.id, normalized.script, normalized.maxResultChars);
     pendingExecution = executionPromise;
     const result = await withTimeout(
       executionPromise,
@@ -547,10 +685,20 @@ async function captureTabPng(config) {
   if (!tab?.id) {
     throw new Error('active_tab_not_found');
   }
-  if (!tab.active && chrome.tabs?.update) {
-    await chrome.tabs.update(tab.id, { active: true });
-  }
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' });
+  lastAutomationTabId = tab.id;
+  const data = await withCdpSession(tab.id, async ({ sendCommand }) => {
+    await sendCommand('Page.enable');
+    const shot = await sendCommand('Page.captureScreenshot', {
+      format: 'png',
+      fromSurface: true,
+      captureBeyondViewport: true
+    });
+    if (typeof shot?.data !== 'string' || shot.data.length === 0) {
+      throw new Error('screenshot_capture_failed');
+    }
+    return shot.data;
+  });
+  const dataUrl = `data:image/png;base64,${data}`;
   return compressDataUrlToJpeg(dataUrl, config);
 }
 
@@ -650,26 +798,155 @@ async function compressDataUrlToJpeg(dataUrl, config) {
 async function sendDomSnapshot(command) {
   debugLog('sendDomSnapshot start', command);
   const requestId = command.request_id || makeRequestId();
+  const activeTransfer = getSingleActiveTransfer();
+  if (activeTransfer) {
+    throw new Error(`transfer_busy:${activeTransfer.transferId}`);
+  }
   const tab = await resolveTargetTab(command.tab_id || null);
   if (!tab?.id) throw new Error('active_tab_not_found');
-  let summary = null;
-  try {
-    summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
-  } catch (err) {
-    debugLog('sendDomSnapshot tab message failed', String(err?.message || err));
+  lastAutomationTabId = tab.id;
+
+  const frameSummaries = await withCdpSession(tab.id, async ({ sendCommand }) => {
+    await sendCommand('Page.enable');
+    const frameTreeResult = await sendCommand('Page.getFrameTree');
+    const frameIds = collectFrameIds(frameTreeResult?.frameTree);
+    const summaries = [];
+    for (const frameId of frameIds) {
+      try {
+        const world = await sendCommand('Page.createIsolatedWorld', {
+          frameId,
+          worldName: 'airkvm_dom_snapshot'
+        });
+        const contextId = world?.executionContextId;
+        if (!Number.isInteger(contextId)) {
+          continue;
+        }
+        const evalResult = await sendCommand('Runtime.evaluate', {
+          contextId,
+          expression: buildFrameSummaryExpression(kDomSnapshotActionableLimitPerFrame),
+          returnByValue: true,
+          awaitPromise: true
+        });
+        if (evalResult?.exceptionDetails) {
+          summaries.push({
+            frame_id: frameId,
+            error: String(evalResult.exceptionDetails?.text || 'cdp_frame_eval_failed')
+          });
+          continue;
+        }
+        const value = evalResult?.result?.value;
+        if (value && typeof value === 'object' && value.__airkvm_dom_summary === true) {
+          summaries.push({ frame_id: frameId, ...value });
+        } else {
+          summaries.push({
+            frame_id: frameId,
+            error: 'cdp_frame_eval_invalid_result'
+          });
+        }
+      } catch (err) {
+        summaries.push({
+          frame_id: frameId,
+          error: String(err?.message || err)
+        });
+      }
+    }
+    return summaries;
+  });
+
+  const primary = frameSummaries.find((entry) => !entry?.error) || null;
+  const actionable = [];
+  for (const frame of frameSummaries) {
+    const items = Array.isArray(frame?.actionable) ? frame.actionable : [];
+    for (const item of items) {
+      actionable.push({
+        frame_id: frame.frame_id || null,
+        ...item
+      });
+    }
   }
-  const title = summary?.title || tab.title || '';
-  const normalizedSummary = summary && typeof summary === 'object'
-    ? { ...summary, title: summary.title || title }
-    : { type: 'dom.summary', ts: Date.now(), url: tab.url || '', title, focus: { tag: null, id: null }, actionable: [] };
+  const normalizedSummary = {
+    type: 'dom.summary',
+    ts: Date.now(),
+    url: primary?.url || tab.url || '',
+    title: primary?.title || tab.title || '',
+    focus: primary?.focus || { tag: null, id: null },
+    actionable,
+    frame_count: frameSummaries.length,
+    frames: frameSummaries.map((frame) => ({
+      frame_id: frame.frame_id || null,
+      url: frame.url || null,
+      title: frame.title || null,
+      actionable_count: Array.isArray(frame.actionable) ? frame.actionable.length : 0,
+      error: frame.error || null
+    }))
+  };
   debugLog('sendDomSnapshot got summary', { tabId: tab.id, title: normalizedSummary?.title ?? null });
-  await postEventViaBridge({
+  const snapshotPayload = {
     type: 'dom.snapshot',
     request_id: requestId,
     tabId: tab.id,
     ts: Date.now(),
     summary: normalizedSummary
-  });
+  };
+  const snapshotJson = JSON.stringify(snapshotPayload);
+  const snapshotBytes = new TextEncoder().encode(snapshotJson);
+  if (snapshotBytes.length === 0) {
+    throw new Error('dom_snapshot_empty');
+  }
+  if (snapshotBytes.length > kDomSnapshotMaxTransferBytes) {
+    throw new Error('dom_snapshot_too_large');
+  }
+
+  pruneScreenshotTransfers();
+  const transferIdMeta = makeTransferId();
+  const transferId = transferIdMeta.string;
+  const transferIdNumeric = transferIdMeta.numeric;
+  const chunkSize = 160;
+  const totalChunks = Math.ceil(snapshotBytes.length / chunkSize);
+  const framesBySeq = new Map();
+  for (let seq = 0; seq < totalChunks; seq += 1) {
+    const start = seq * chunkSize;
+    const end = Math.min(snapshotBytes.length, start + chunkSize);
+    const payloadBytes = snapshotBytes.slice(start, end);
+    framesBySeq.set(
+      seq,
+      encodeTransferChunkFrame({
+        transferIdNumeric,
+        seq,
+        payloadBytes
+      })
+    );
+  }
+  const session = {
+    transferId,
+    transferIdNumeric,
+    requestId,
+    source: 'dom',
+    meta: null,
+    framesBySeq,
+    totalChunks,
+    updatedAt: Date.now(),
+    highestAckSeq: -1,
+    nextSeqToSend: 0,
+    doneSent: false,
+    sending: false,
+    pumpRequested: false
+  };
+  screenshotTransfers.set(transferId, session);
+  await postEventOrThrow({
+    type: 'transfer.meta',
+    request_id: requestId,
+    transfer_id: transferId,
+    source: 'dom',
+    mime: 'application/json',
+    encoding: 'bin',
+    chunk_size: chunkSize,
+    total_chunks: totalChunks,
+    total_bytes: snapshotBytes.length,
+    tab_id: tab.id,
+    ts: Date.now()
+  }, 'dom_snapshot_meta_send_failed');
+  await pumpTransferSession(session);
 }
 
 async function sendScreenshot(command) {

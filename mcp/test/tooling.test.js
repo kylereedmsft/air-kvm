@@ -178,11 +178,82 @@ test('dom snapshot collector returns structured success payload', () => {
   const ignored = collect({ type: 'dom.snapshot', request_id: 'other' });
   assert.equal(ignored, null);
 
+  const unrelatedReject = collect({ ok: false, error: 'invalid_command' });
+  assert.equal(unrelatedReject, null);
+
   const done = collect({ type: 'dom.snapshot', request_id: 'dom-1', summary: { title: 'T' } });
   assert.equal(done.done, true);
   assert.equal(done.ok, true);
   assert.equal(done.data.request_id, 'dom-1');
   assert.equal(done.data.snapshot.type, 'dom.snapshot');
+});
+
+test('dom snapshot collector reassembles binary transfer and emits done ack', () => {
+  const command = { type: 'dom.snapshot.request', request_id: 'dom-transfer-1' };
+  const collect = createResponseCollector('airkvm_dom_snapshot', command);
+  const transferId = 'tx_00000044';
+  const payload = {
+    type: 'dom.snapshot',
+    request_id: 'dom-transfer-1',
+    summary: { title: 'From Transfer' }
+  };
+  const payloadBytes = Buffer.from(JSON.stringify(payload), 'utf8');
+  const split = Math.floor(payloadBytes.length / 2);
+
+  assert.equal(collect({
+    type: 'transfer.meta',
+    request_id: 'dom-transfer-1',
+    transfer_id: transferId,
+    source: 'dom',
+    mime: 'application/json',
+    total_chunks: 2,
+    total_bytes: payloadBytes.length
+  }, { kind: 'ctrl' }, []), null);
+
+  assert.equal(
+    collect(null, { kind: 'bin', transfer_id: transferId, seq: 0, payload: payloadBytes.subarray(0, split) }, []),
+    null
+  );
+  assert.equal(
+    collect(null, { kind: 'bin', transfer_id: transferId, seq: 1, payload: payloadBytes.subarray(split) }, []),
+    null
+  );
+
+  const done = collect({
+    type: 'transfer.done',
+    request_id: 'dom-transfer-1',
+    transfer_id: transferId,
+    source: 'dom',
+    total_chunks: 2
+  }, { kind: 'ctrl' }, []);
+
+  assert.equal(done.done, true);
+  assert.equal(done.ok, true);
+  assert.equal(done.data.snapshot.type, 'dom.snapshot');
+  assert.equal(done.data.snapshot.summary.title, 'From Transfer');
+  assert.equal(done.outbound[0].type, 'transfer.done.ack');
+  assert.equal(done.outbound[0].transfer_id, transferId);
+});
+
+test('dom snapshot collector ignores pre-meta bin_error and no_such_transfer noise', () => {
+  const command = { type: 'dom.snapshot.request', request_id: 'dom-noise-1' };
+  const collect = createResponseCollector('airkvm_dom_snapshot', command);
+
+  const ignoredBinError = collect(null, {
+    kind: 'bin_error',
+    transfer_id: 'tx_00000000',
+    seq: 0,
+    error: 'crc_mismatch'
+  }, []);
+  assert.equal(ignoredBinError, null);
+
+  const ignoredTransferError = collect({
+    type: 'transfer.error',
+    request_id: 'dom-noise-1',
+    transfer_id: 'tx_00000000',
+    code: 'no_such_transfer'
+  }, { kind: 'ctrl' }, []);
+  assert.equal(ignoredTransferError, null);
 });
 
 test('binary screenshot collector reassembles transfer and emits done ack', () => {

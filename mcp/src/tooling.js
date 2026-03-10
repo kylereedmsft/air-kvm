@@ -199,11 +199,129 @@ export function buildCommandForTool(name, args = {}) {
   return null;
 }
 
+function isCorrelatedDeviceRejection(msg, requestId) {
+  if (typeof msg?.ok !== 'boolean' || msg.ok !== false) return false;
+  if (typeof requestId !== 'string' || requestId.length === 0) return true;
+  const msgRequestId = msg?.request_id ?? msg?.rid ?? null;
+  return typeof msgRequestId === 'string' && msgRequestId === requestId;
+}
+
 export function createResponseCollector(name, command) {
   if (name === 'airkvm_dom_snapshot') {
     const requestId = command.request_id;
-    return (msg) => {
-      if (typeof msg?.ok === 'boolean' && msg.ok === false) {
+    const chunksBySeq = new Map();
+    let transferMeta = null;
+    let transferId = null;
+    let receivedBytes = 0;
+    let highestContiguousSeq = -1;
+    let lastAckSeq = -1;
+    let pendingGapNackSeq = null;
+    let timeoutRetries = 0;
+    let preMetaTimeoutRetries = 0;
+    let sawTransferDone = false;
+    const kMaxDomRawBytes = 2 * 1024 * 1024;
+    const kAckStride = 8;
+    const kMaxTimeoutRetries = 3;
+    const kMaxPreMetaTimeoutRetries = 6;
+    const kPreMetaExtendMs = 5000;
+
+    function computeHighestContiguousSeq() {
+      let seq = -1;
+      while (chunksBySeq.has(seq + 1)) {
+        seq += 1;
+      }
+      return seq;
+    }
+
+    function maybeAck(force = false) {
+      if (!transferId) return null;
+      highestContiguousSeq = computeHighestContiguousSeq();
+      if (!force && highestContiguousSeq < 0) return null;
+      if (!force && highestContiguousSeq - lastAckSeq < kAckStride) return null;
+      if (highestContiguousSeq === lastAckSeq) return null;
+      lastAckSeq = highestContiguousSeq;
+      return {
+        type: 'transfer.ack',
+        request_id: requestId,
+        transfer_id: transferId,
+        highest_contiguous_seq: highestContiguousSeq
+      };
+    }
+
+    const onFrame = (msg, frame) => {
+      if (frame?.kind === 'bin_error') {
+        // Ignore pre-meta/mismatched binary errors to avoid poisoning a fresh request.
+        if (!transferId || frame.transfer_id !== transferId) {
+          return null;
+        }
+        if (Number.isInteger(frame.seq)) {
+          return {
+            done: false,
+            outbound: [{
+              type: 'transfer.nack',
+              request_id: requestId,
+              transfer_id: transferId,
+              seq: frame.seq,
+              reason: frame.error || 'chunk_error'
+            }],
+            extendTimeoutMs: 7000
+          };
+        }
+        return null;
+      }
+
+      if (frame?.kind === 'bin') {
+        if (!transferMeta || !transferId) return null;
+        if (frame.transfer_id !== transferId) return null;
+        if (!Number.isInteger(frame.seq) || !Buffer.isBuffer(frame.payload)) return null;
+
+        const seq = frame.seq;
+        const bytes = frame.payload;
+        const beforeHighest = computeHighestContiguousSeq();
+        if (!chunksBySeq.has(seq)) {
+          receivedBytes += bytes.length;
+        }
+        if (receivedBytes > kMaxDomRawBytes) {
+          return {
+            done: true,
+            ok: false,
+            data: {
+              request_id: requestId,
+              error: 'dom_snapshot_response_too_large',
+              detail: { received_bytes: receivedBytes, max_raw_bytes: kMaxDomRawBytes }
+            }
+          };
+        }
+        chunksBySeq.set(seq, bytes);
+        const afterHighest = computeHighestContiguousSeq();
+        const outbound = [];
+        if (pendingGapNackSeq !== null && chunksBySeq.has(pendingGapNackSeq)) {
+          pendingGapNackSeq = null;
+        }
+        if (seq > beforeHighest + 1) {
+          const missingSeq = beforeHighest + 1;
+          if (!chunksBySeq.has(missingSeq) && pendingGapNackSeq !== missingSeq) {
+            pendingGapNackSeq = missingSeq;
+            outbound.push({
+              type: 'transfer.nack',
+              request_id: requestId,
+              transfer_id: transferId,
+              seq: missingSeq,
+              reason: 'missing_chunk'
+            });
+          }
+        }
+        highestContiguousSeq = afterHighest;
+        const ack = maybeAck(false);
+        if (ack) outbound.push(ack);
+        if (outbound.length > 0) {
+          return { done: false, outbound, extendTimeoutMs: 7000 };
+        }
+        return null;
+      }
+
+      if (!msg || typeof msg !== 'object') return null;
+      if (isCorrelatedDeviceRejection(msg, requestId)) {
         return {
           done: true,
           ok: false,
@@ -224,14 +342,165 @@ export function createResponseCollector(name, command) {
           data: { request_id: requestId, error: msg.error || 'dom_snapshot_error', detail: msg }
         };
       }
-      return null;
+      if (msg?.type === 'transfer.error' && msg?.request_id === requestId) {
+        const msgTransferId = msg.transfer_id || msg.tid || null;
+        const code = msg.code || msg.error || 'transfer_error';
+        if (!transferId) {
+          // Pre-meta no_such_transfer can be caused by stale parse noise; ignore it.
+          if (code === 'no_such_transfer') return null;
+        } else if (msgTransferId && msgTransferId !== transferId) {
+          return null;
+        }
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            error: code,
+            detail: msg
+          }
+        };
+      }
+      if (msg?.type === 'transfer.meta' && msg?.request_id === requestId) {
+        const source = msg.source ?? msg.src;
+        if (source !== 'dom') return null;
+        transferMeta = msg;
+        transferId = msg.transfer_id || msg.tid || transferId;
+        const totalBytes = msg.total_bytes ?? msg.tb;
+        if (Number.isInteger(totalBytes) && totalBytes > kMaxDomRawBytes) {
+          return {
+            done: true,
+            ok: false,
+            data: {
+              request_id: requestId,
+              error: 'dom_snapshot_response_too_large',
+              detail: { total_bytes: totalBytes, max_raw_bytes: kMaxDomRawBytes }
+            }
+          };
+        }
+      } else if (msg?.type === 'transfer.done' && msg?.request_id === requestId) {
+        const doneTransferId = msg.transfer_id || msg.tid || null;
+        if (transferId && doneTransferId && doneTransferId !== transferId) {
+          return null;
+        }
+        sawTransferDone = true;
+      }
+
+      const totalChunks = transferMeta ? (transferMeta.total_chunks ?? transferMeta.tc ?? transferMeta.total ?? transferMeta.t) : null;
+      if (!transferMeta || !Number.isInteger(totalChunks) || totalChunks < 0) {
+        return null;
+      }
+      if (!sawTransferDone) {
+        return null;
+      }
+      if (chunksBySeq.size < totalChunks) {
+        return null;
+      }
+
+      const ordered = [];
+      for (let seq = 0; seq < totalChunks; seq += 1) {
+        if (!chunksBySeq.has(seq)) {
+          return null;
+        }
+        ordered.push(chunksBySeq.get(seq));
+      }
+      const rawBytes = Buffer.concat(ordered);
+      if (rawBytes.length > kMaxDomRawBytes) {
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            error: 'dom_snapshot_response_too_large',
+            detail: { received_bytes: rawBytes.length, max_raw_bytes: kMaxDomRawBytes }
+          }
+        };
+      }
+      let parsedSnapshot = null;
+      try {
+        parsedSnapshot = JSON.parse(rawBytes.toString('utf8'));
+      } catch {
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            error: 'dom_snapshot_decode_failed'
+          }
+        };
+      }
+      return {
+        done: true,
+        ok: true,
+        outbound: transferId
+          ? [{
+            type: 'transfer.done.ack',
+            request_id: requestId,
+            transfer_id: transferId
+          }]
+          : undefined,
+        data: {
+          request_id: requestId,
+          snapshot: parsedSnapshot
+        }
+      };
     };
+    onFrame.onTimeout = () => {
+      if (!transferId) {
+        if (preMetaTimeoutRetries >= kMaxPreMetaTimeoutRetries) {
+          return {
+            done: true,
+            ok: false,
+            data: {
+              request_id: requestId,
+              error: 'dom_snapshot_meta_timeout',
+              detail: {
+                retries: preMetaTimeoutRetries
+              }
+            }
+          };
+        }
+        preMetaTimeoutRetries += 1;
+        return {
+          done: false,
+          extendTimeoutMs: kPreMetaExtendMs
+        };
+      }
+      if (timeoutRetries >= kMaxTimeoutRetries) {
+        return {
+          done: true,
+          ok: false,
+          data: {
+            request_id: requestId,
+            error: 'dom_snapshot_transfer_timeout',
+            detail: {
+              transfer_id: transferId,
+              retries: timeoutRetries,
+              highest_contiguous_seq: computeHighestContiguousSeq()
+            }
+          }
+        };
+      }
+      timeoutRetries += 1;
+      const fromSeq = computeHighestContiguousSeq() + 1;
+      return {
+        done: false,
+        outbound: [{
+          type: 'transfer.resume',
+          request_id: requestId,
+          transfer_id: transferId,
+          from_seq: fromSeq
+        }],
+        extendTimeoutMs: 7000
+      };
+    };
+    return onFrame;
   }
 
   if (name === 'airkvm_list_tabs') {
     const requestId = command.request_id;
     return (msg) => {
-      if (typeof msg?.ok === 'boolean' && msg.ok === false) {
+      if (isCorrelatedDeviceRejection(msg, requestId)) {
         return {
           done: true,
           ok: false,
@@ -262,7 +531,7 @@ export function createResponseCollector(name, command) {
   if (name === 'airkvm_open_tab') {
     const requestId = command.request_id;
     return (msg) => {
-      if (typeof msg?.ok === 'boolean' && msg.ok === false) {
+      if (isCorrelatedDeviceRejection(msg, requestId)) {
         return {
           done: true,
           ok: false,
@@ -290,7 +559,7 @@ export function createResponseCollector(name, command) {
   if (name === 'airkvm_exec_js_tab') {
     const requestId = command.request_id;
     return (msg) => {
-      if (typeof msg?.ok === 'boolean' && msg.ok === false) {
+      if (isCorrelatedDeviceRejection(msg, requestId)) {
         return {
           done: true,
           ok: false,
@@ -434,7 +703,7 @@ export function createResponseCollector(name, command) {
       const msgRequestId = msg?.request_id ?? msg?.rid;
       const msgSource = msg.source ?? msg.src;
       const msgError = msg.error ?? msg.e;
-      if (typeof msg?.ok === 'boolean' && msg.ok === false) {
+      if (isCorrelatedDeviceRejection(msg, requestId)) {
         return {
           done: true,
           ok: false,

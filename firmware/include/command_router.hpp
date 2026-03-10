@@ -13,10 +13,10 @@ class CommandRouter {
  public:
   CommandRouter(TransportMux& transport, DeviceState& state, HidController& hid);
 
- void ProcessLine(const String& line, const char* source);
+  void ProcessLine(const String& line, const char* source);
 
  private:
-  bool HandleCommand(const airkvm::Command& cmd);
+  bool HandleCommand(const airkvm::Command& cmd, const char* source);
 
   TransportMux& transport_;
   DeviceState& state_;

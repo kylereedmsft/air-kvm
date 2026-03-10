@@ -287,7 +287,7 @@ test('postBinary emits tx telemetry with binary payload type', async () => {
   )), true);
 });
 
-test('postEvent chunks large control payload across multiple BLE writes', async () => {
+test('postEvent keeps control payload as one JSON line across BLE writes', async () => {
   __resetBleForTest();
   const writes = [];
   const rx = {
@@ -334,7 +334,10 @@ test('postEvent chunks large control payload across multiple BLE writes', async 
     merged.set(chunk, cursor);
     cursor += chunk.length;
   }
+  const mergedText = new TextDecoder().decode(merged);
   assert.equal(merged[merged.length - 1], 10); // '\n'
+  assert.equal(mergedText.includes('"type":"tabs.list"'), true);
+  assert.equal(mergedText.includes('"request_id":"tabs-big-1"'), true);
 });
 
 test('disconnectBle clears connected device metadata', async () => {
@@ -417,65 +420,4 @@ test('connectBle invokes onDisconnect callback on gatt disconnection', async () 
   assert.equal(typeof disconnectHandler, 'function');
   disconnectHandler();
   assert.equal(disconnectCalls, 1);
-});
-
-test('connectBle reassembles ctrl.chunk notifications into one command', async () => {
-  __resetBleForTest();
-  let notifyHandler = null;
-  const received = [];
-  const rx = {
-    writeValueWithoutResponse: async () => {}
-  };
-  const tx = {
-    addEventListener: (_event, handler) => {
-      notifyHandler = handler;
-    },
-    startNotifications: async () => {}
-  };
-  const service = {
-    getCharacteristic: async (uuid) => (
-      String(uuid).endsWith('03-b5a3-f393-e0a9-e50e24dccb01') ? tx : rx
-    )
-  };
-  const server = {
-    connected: true,
-    getPrimaryService: async () => service
-  };
-  const device = {
-    gatt: { connected: true, connect: async () => server },
-    addEventListener: () => {}
-  };
-  const navigatorLike = {
-    bluetooth: {
-      requestDevice: async () => device
-    }
-  };
-
-  const connected = await connectBle({
-    navigatorLike,
-    onCommand: (msg) => received.push(msg)
-  });
-  assert.equal(connected, true);
-  assert.equal(typeof notifyHandler, 'function');
-
-  const full = JSON.stringify({
-    type: 'transfer.resume',
-    request_id: 'r-1',
-    transfer_id: 'tx_12345678',
-    from_seq: 8
-  });
-  const frag0 = full.slice(0, Math.floor(full.length / 2));
-  const frag1 = full.slice(Math.floor(full.length / 2));
-  const chunk0 = `${JSON.stringify({ type: 'ctrl.chunk', chunk_id: 1, seq: 0, total: 2, frag: frag0 })}\n`;
-  const chunk1 = `${JSON.stringify({ type: 'ctrl.chunk', chunk_id: 1, seq: 1, total: 2, frag: frag1 })}\n`;
-  const encoder = new TextEncoder();
-
-  notifyHandler({ target: { value: new DataView(encoder.encode(chunk0).buffer) } });
-  notifyHandler({ target: { value: new DataView(encoder.encode(chunk1).buffer) } });
-
-  assert.equal(received.length, 1);
-  assert.equal(received[0].type, 'transfer.resume');
-  assert.equal(received[0].request_id, 'r-1');
-  assert.equal(received[0].transfer_id, 'tx_12345678');
-  assert.equal(received[0].from_seq, 8);
 });

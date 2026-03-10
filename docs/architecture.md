@@ -19,7 +19,7 @@
   - transfer binary (`type=0x01`)
   - control JSON (`type=0x02`)
   - log text (`type=0x03`)
-- Sends BLE control notifications directly; chunks oversized control payloads via `ctrl.chunk`.
+- Sends BLE control notifications directly.
 - HID support exists in code, but default build has `AIRKVM_ENABLE_HID=0`.
 
 2. MCP Server (`mcp/`)
@@ -46,7 +46,6 @@
 - `ble_bridge.html` + `ble_bridge.js` is the primary BLE runtime context.
   - Connects via Web Bluetooth.
   - Forwards control and binary data between service worker and firmware.
-  - Reassembles inbound `ctrl.chunk` messages.
 - `bridge.js` is BLE transport helper (write/read/notify and parsing).
 
 ## Data Paths

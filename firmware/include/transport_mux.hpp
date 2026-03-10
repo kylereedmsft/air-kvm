@@ -15,6 +15,7 @@ class TransportMux {
   void SetBleTxCharacteristic(NimBLECharacteristic* characteristic);
   void EmitLog(const String& message);
   void EmitControl(const char* payload);
+  void EmitControlUartOnly(const char* payload);
   void EmitBinaryFrame(const uint8_t* bytes, size_t len);
   void EmitState(const DeviceState& state);
 
@@ -31,9 +32,6 @@ class TransportMux {
   void EnqueueFrame(const TxFrame& frame);
   void EmitFrameDirect(const TxFrame& frame);
   void EmitBleControl(const char* payload);
-  void EmitBleControlChunked(const char* payload);
-  static String BuildCtrlChunkMessage(uint32_t chunk_id, size_t seq, size_t total, const String& frag);
-  static String JsonEscape(const String& in);
 #if defined(ESP32)
   static void TxTaskMain(void* arg);
   void TxTaskLoop();
@@ -42,7 +40,6 @@ class TransportMux {
 #endif
 
   NimBLECharacteristic* tx_char_{nullptr};
-  uint32_t ble_chunk_id_{1};
 };
 
 }  // namespace airkvm::fw

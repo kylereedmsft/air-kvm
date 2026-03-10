@@ -15,7 +15,7 @@ Maintain a reliable remote-control and browser-automation stack where:
 - Command router supports pass-through for `dom.snapshot`, `tabs.list`, `screenshot`, and `transfer.*` control messages.
 - UART output is framed binary (`AK`) for control/log/binary payloads.
 - Single deterministic UART TX writer path is enforced on ESP32 (queue + TX task).
-- Oversized BLE control notify payloads are chunked with `ctrl.chunk`.
+- BLE RX queue remains the required BLE->UART serialization path; queue writes now use bounded wait and explicit overflow telemetry.
 - HID code exists, but default app build uses `AIRKVM_ENABLE_HID=0`.
 
 ### MCP
@@ -41,11 +41,13 @@ Maintain a reliable remote-control and browser-automation stack where:
   - `dom.snapshot.request`
   - `tabs.list.request`
   - `tab.open.request`
-  - `js.exec.request` (single in-flight execution, timeout-bounded, `world: 'MAIN'`)
+  - `js.exec.request` (single in-flight execution, timeout-bounded, CDP `Runtime.evaluate`)
   - `screenshot.request` (tab + desktop)
   - transfer session controls (`transfer.resume`, `transfer.ack`, `transfer.done.ack`, `transfer.nack`, `transfer.cancel`, `transfer.reset`)
 - Screenshot path includes capture timeout/stage timeout guards and JPEG downscale/compression logic.
 - Default logging is low-noise; verbose mode is toggleable in bridge UI.
+- DOM snapshot responses now stream over transfer/binary (`transfer.meta` + binary chunks + `transfer.done`) with ACK/NACK/resume support.
+- Outbound control messages are sent as plain JSON lines; large payloads should use transfer streaming rather than control chunking.
 
 ## Known Remaining Work
 
@@ -61,6 +63,10 @@ Maintain a reliable remote-control and browser-automation stack where:
 4. Documentation maintenance discipline.
 - Any transport/protocol change must update `docs/protocol.md`, `docs/architecture.md`, and this file in same PR.
 
+5. `key.type` escaped-string handling is still missing.
+- Add explicit escape parsing for special characters and named special keys (for example newline/tab and `Enter`/`Tab` tokens) so typed text flows can express non-printable keys safely.
+- Define the syntax in protocol docs and keep behavior bounded/validated.
+
 ## Immediate Next Steps
 
 1. Add/expand integration tests that simulate:
@@ -72,3 +78,9 @@ Maintain a reliable remote-control and browser-automation stack where:
 2. Validate repeated long-run desktop capture sessions under normal and noisy conditions.
 
 3. If HID milestone resumes, define a separate HID validation checklist and keep it isolated from BLE UART data path.
+
+4. Implement and validate escaped-string support for `key.type`, with protocol docs + firmware tests.
+
+5. Complete transfer-path reliability validation for non-image payloads.
+- Confirm long `dom.snapshot` transfer sessions complete consistently under live BLE conditions.
+- Add diagnostics for missing-sequence detection and retry behavior across image + DOM transfers.

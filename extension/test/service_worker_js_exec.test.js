@@ -10,11 +10,21 @@ function makeHarness() {
   const postedPayloads = [];
   const postedBinary = [];
   const runtimeListeners = [];
-  const executeScriptCalls = [];
+  const cdpCommandCalls = [];
+  const cdpAttachCalls = [];
+  const cdpDetachCalls = [];
   const createTabCalls = [];
   const tabCaptureCalls = [];
   const desktopCaptureCalls = [];
-  let executeScriptImpl = async () => [{ result: { ok: true, value_type: 'number', value_json: '1', truncated: false } }];
+  let jsExecEvalImpl = async () => ({ ok: true, value_type: 'number', value_json: '1', truncated: false });
+  let domSummaryEvalImpl = async () => ({
+    __airkvm_dom_summary: true,
+    url: 'https://example.com',
+    title: 'Example Title',
+    focus: { tag: null, id: null },
+    actionable: []
+  });
+  let cdpCapturePngBase64 = 'QUJDRA==';
   let createTabImpl = async ({ url, active }) => ({
     id: 44,
     windowId: 1,
@@ -103,11 +113,52 @@ function makeHarness() {
         return createTabImpl(opts);
       }
     },
-    scripting: {
-      executeScript: async (details) => {
-        executeScriptCalls.push(details);
-        return executeScriptImpl(details);
-      }
+    debugger: {
+      attach: (_target, _version, cb) => {
+        cdpAttachCalls.push(_target);
+        cb();
+      },
+      detach: (_target, cb) => {
+        cdpDetachCalls.push(_target);
+        cb();
+      },
+      sendCommand: async (_target, method, params, cb) => {
+        cdpCommandCalls.push({ target: _target, method, params: params || {} });
+        if (method === 'Page.enable') {
+          cb({});
+          return;
+        }
+        if (method === 'Page.getFrameTree') {
+          cb({
+            frameTree: {
+              frame: { id: 'frame-main' }
+            }
+          });
+          return;
+        }
+        if (method === 'Page.createIsolatedWorld') {
+          cb({ executionContextId: 7 });
+          return;
+        }
+        if (method === 'Runtime.evaluate') {
+          if (String(params?.expression || '').includes('__airkvm_dom_summary_limit')) {
+            const value = await domSummaryEvalImpl({ target: _target, method, params });
+            cb({ result: { value } });
+            return;
+          }
+          const value = await jsExecEvalImpl({ target: _target, method, params });
+          cb({ result: { value } });
+          return;
+        }
+        if (method === 'Page.captureScreenshot') {
+          tabCaptureCalls.push({ target: _target, method, params: params || {} });
+          cb({ data: cdpCapturePngBase64 });
+          return;
+        }
+        cb({});
+      },
+      onEvent: { addListener: () => {}, removeListener: () => {} },
+      onDetach: { addListener: () => {}, removeListener: () => {} }
     },
     action: {
       setBadgeText: () => {},
@@ -120,12 +171,20 @@ function makeHarness() {
     postedPayloads,
     postedBinary,
     runtimeListeners,
-    executeScriptCalls,
+    cdpCommandCalls,
+    cdpAttachCalls,
+    cdpDetachCalls,
     createTabCalls,
     tabCaptureCalls,
     desktopCaptureCalls,
-    setExecuteScriptImpl: (impl) => {
-      executeScriptImpl = impl;
+    setJsExecEvalImpl: (impl) => {
+      jsExecEvalImpl = impl;
+    },
+    setDomSummaryEvalImpl: (impl) => {
+      domSummaryEvalImpl = impl;
+    },
+    setCdpCapturePngBase64: (value) => {
+      cdpCapturePngBase64 = value;
     },
     setCreateTabImpl: (impl) => {
       createTabImpl = impl;
@@ -202,14 +261,12 @@ test('service worker handles js.exec.request and posts js.exec.result via bridge
   const harness = makeHarness();
   await importServiceWorkerFresh();
 
-  harness.setExecuteScriptImpl(async () => [{
-    result: {
-      ok: true,
-      value_type: 'string',
-      value_json: '"ok"',
-      truncated: false
-    }
-  }]);
+  harness.setJsExecEvalImpl(async () => ({
+    ok: true,
+    value_type: 'string',
+    value_json: '"ok"',
+    truncated: false
+  }));
 
   const listener = findBleCommandListener(harness.runtimeListeners);
   const { returned, response } = await callBleCommand(listener, {
@@ -222,8 +279,8 @@ test('service worker handles js.exec.request and posts js.exec.result via bridge
 
   assert.equal(returned, true);
   assert.deepEqual(response, { ok: true });
-  assert.equal(harness.executeScriptCalls.length, 1);
-  assert.equal(harness.executeScriptCalls[0].world, 'MAIN');
+  const evalCalls = harness.cdpCommandCalls.filter((entry) => entry.method === 'Runtime.evaluate');
+  assert.equal(evalCalls.length, 1);
 
   const resultPayload = harness.postedPayloads.find((payload) => payload?.type === 'js.exec.result');
   assert.equal(Boolean(resultPayload), true);
@@ -238,8 +295,8 @@ test('service worker returns js_exec_busy when a js exec request is already in f
   await importServiceWorkerFresh();
 
   let resolveFirst = null;
-  harness.setExecuteScriptImpl(() => new Promise((resolve) => {
-    resolveFirst = () => resolve([{ result: { ok: true, value_type: 'number', value_json: '1', truncated: false } }]);
+  harness.setJsExecEvalImpl(() => new Promise((resolve) => {
+    resolveFirst = () => resolve({ ok: true, value_type: 'number', value_json: '1', truncated: false });
   }));
 
   const listener = findBleCommandListener(harness.runtimeListeners);
@@ -291,7 +348,8 @@ test('service worker rejects ble.command from untrusted sender', async () => {
 
   assert.equal(returned, true);
   assert.deepEqual(response, { ok: false, error: 'untrusted_sender' });
-  assert.equal(harness.executeScriptCalls.length, 0);
+  const evalCalls = harness.cdpCommandCalls.filter((entry) => entry.method === 'Runtime.evaluate');
+  assert.equal(evalCalls.length, 0);
 });
 
 test('service worker rejects ble.command when sender id matches but sender url is malformed', async () => {
@@ -312,7 +370,8 @@ test('service worker rejects ble.command when sender id matches but sender url i
 
   assert.equal(returned, true);
   assert.deepEqual(response, { ok: false, error: 'untrusted_sender' });
-  assert.equal(harness.executeScriptCalls.length, 0);
+  const evalCalls = harness.cdpCommandCalls.filter((entry) => entry.method === 'Runtime.evaluate');
+  assert.equal(evalCalls.length, 0);
 });
 
 test('service worker releases js exec lock after bounded post-timeout hold', async () => {
@@ -320,12 +379,12 @@ test('service worker releases js exec lock after bounded post-timeout hold', asy
   await importServiceWorkerFresh();
 
   let callCount = 0;
-  harness.setExecuteScriptImpl(() => {
+  harness.setJsExecEvalImpl(() => {
     callCount += 1;
     if (callCount === 1) {
       return new Promise(() => {});
     }
-    return Promise.resolve([{ result: { ok: true, value_type: 'number', value_json: '2', truncated: false } }]);
+    return Promise.resolve({ ok: true, value_type: 'number', value_json: '2', truncated: false });
   });
 
   const listener = findBleCommandListener(harness.runtimeListeners);
@@ -386,13 +445,11 @@ test('service worker returns invalid_js_exec_request for empty script', async ()
 test('service worker maps runtime script failures to js_exec_runtime_error', async () => {
   const harness = makeHarness();
   await importServiceWorkerFresh();
-  harness.setExecuteScriptImpl(async () => [{
-    result: {
-      ok: false,
-      error_code: 'js_exec_runtime_error',
-      error: 'boom'
-    }
-  }]);
+  harness.setJsExecEvalImpl(async () => ({
+    ok: false,
+    error_code: 'js_exec_runtime_error',
+    error: 'boom'
+  }));
   const listener = findBleCommandListener(harness.runtimeListeners);
   await callBleCommand(listener, {
     type: 'js.exec.request',
@@ -451,9 +508,16 @@ test('service worker dispatches dom snapshot requests and ignores unknown comman
     request_id: 'dom-1'
   });
 
-  const domPayload = harness.postedPayloads.find((entry) => entry?.type === 'dom.snapshot');
-  assert.equal(domPayload?.request_id, 'dom-1');
-  assert.equal(domPayload?.summary?.title, 'Example Title');
+  const metaPayload = harness.postedPayloads.find((entry) => entry?.type === 'transfer.meta' && entry?.request_id === 'dom-1');
+  assert.equal(Boolean(metaPayload), true);
+  assert.equal(metaPayload?.source, 'dom');
+  assert.equal(metaPayload?.mime, 'application/json');
+  assert.equal(metaPayload?.encoding, 'bin');
+  assert.equal(metaPayload?.total_chunks > 0, true);
+  assert.equal(harness.postedBinary.length, metaPayload.total_chunks);
+  const donePayload = harness.postedPayloads.find((entry) => entry?.type === 'transfer.done' && entry?.request_id === 'dom-1');
+  assert.equal(Boolean(donePayload), true);
+  assert.equal(donePayload?.transfer_id, metaPayload?.transfer_id);
 
   const payloadCountBeforeUnknown = harness.postedPayloads.length;
   await callBleCommand(listener, {

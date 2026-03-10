@@ -139,7 +139,12 @@ void AirKvmApp::OnBleWrite(const std::string& value) {
     }
     item.len = value.size();
     std::memcpy(item.data, value.data(), item.len);
-    xQueueSend(ble_rx_queue_, &item, 0);
+    // Keep BLE->UART serialization on the queue path to avoid interleaving writes
+    // from callback context with the main loop UART writer.
+    if (xQueueSend(ble_rx_queue_, &item, pdMS_TO_TICKS(20)) == pdTRUE) {
+      return;
+    }
+    transport_.EmitLog("{\"evt\":\"ble.rx_queue_overflow\",\"action\":\"drop\"}");
     return;
   }
 #endif

@@ -227,6 +227,8 @@ export class UartTransport {
               frame.kind === 'bin_error'
             );
             if (responseCollector && shouldCallCollector) {
+              // Any control/bin frame is progress for long-running streamed responses.
+              armTimer(this.commandTimeoutMs);
               const collected = responseCollector(msg, frame, frames);
               if (collected?.done) {
                 if (Array.isArray(collected.outbound) && collected.outbound.length > 0) {

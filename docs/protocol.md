@@ -11,7 +11,7 @@ AirKVM currently uses two transport segments:
 2. `Extension <-> Firmware` over BLE UART-style GATT
 - Control messages are JSON lines (`...\n`) over BLE write/notify.
 - Screenshot chunk payloads are sent as raw binary chunk frames.
-- Large control JSON from firmware to extension may be split via `ctrl.chunk` and reassembled in the extension bridge.
+- Large payload responses (screenshots, DOM snapshot) use the transfer/binary path (`transfer.meta` + binary chunk frames + `transfer.done`).
 
 ## 2) BLE GATT Profile
 
@@ -156,28 +156,7 @@ Transfer ID encoding:
 - Control plane: string `tx_<hex8>` (for example `tx_12ab34cd`)
 - Binary frame: uint32 LE numeric ID derived from that hex value.
 
-## 6) BLE Control Continuation (`ctrl.chunk`)
-
-When a control JSON message is too large for a single BLE notify payload, firmware may emit continuation frames:
-
-```json
-{"type":"ctrl.chunk","chunk_id":42,"seq":0,"total":3,"frag":"{\"type\":\"transfer.meta\"..."}
-```
-
-Fields:
-- `chunk_id`: uint32 sender-local chunk session ID
-- `seq`: zero-based fragment index
-- `total`: total fragment count
-- `frag`: escaped JSON substring
-
-Extension bridge behavior:
-- Buffers by `chunk_id`
-- Reassembles when all `seq` values are present
-- Parses merged JSON
-- Forwards only the reassembled original control message
-- Drops standalone partial chunk frames at handler layer
-
-## 7) MCP Tool Contract
+## 6) MCP Tool Contract
 
 Tools exposed by MCP:
 - `airkvm_send`

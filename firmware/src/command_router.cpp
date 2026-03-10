@@ -26,7 +26,7 @@ void CommandRouter::ProcessLine(const String& line, const char* source) {
     return;
   }
 
-  const bool ok = HandleCommand(*cmd);
+  const bool ok = HandleCommand(*cmd, source);
   if (!ok) {
     transport_.EmitControl("{\"ok\":false,\"error\":\"command_rejected\"}");
   } else {
@@ -34,7 +34,7 @@ void CommandRouter::ProcessLine(const String& line, const char* source) {
   }
 }
 
-bool CommandRouter::HandleCommand(const airkvm::Command& cmd) {
+bool CommandRouter::HandleCommand(const airkvm::Command& cmd, const char* source) {
   switch (cmd.type) {
     case airkvm::CommandType::kMouseMoveRel: {
       const bool injected = hid_.SendMouseMoveRel(cmd.dx, cmd.dy);
@@ -111,9 +111,15 @@ bool CommandRouter::HandleCommand(const airkvm::Command& cmd) {
     case airkvm::CommandType::kTransferCancelOk:
     case airkvm::CommandType::kTransferReset:
     case airkvm::CommandType::kTransferResetOk:
-    case airkvm::CommandType::kTransferError:
-      transport_.EmitControl(cmd.raw.c_str());
+    case airkvm::CommandType::kTransferError: {
+      const bool from_ble = source != nullptr && String(source) == "ble";
+      if (from_ble) {
+        transport_.EmitControlUartOnly(cmd.raw.c_str());
+      } else {
+        transport_.EmitControl(cmd.raw.c_str());
+      }
       return true;
+    }
     case airkvm::CommandType::kUnknown:
       return true;
   }

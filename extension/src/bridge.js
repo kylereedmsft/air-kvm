@@ -1,7 +1,7 @@
 const UART_SERVICE_UUID = '6e400101-b5a3-f393-e0a9-e50e24dccb01';
 const UART_RX_CHAR_UUID = '6e400102-b5a3-f393-e0a9-e50e24dccb01';
 const UART_TX_CHAR_UUID = '6e400103-b5a3-f393-e0a9-e50e24dccb01';
-const kBleControlChunkBytes = 160;
+const kBleWriteChunkBytes = 160;
 const kDebug = true;
 let verboseDebugEnabled = false;
 let debugLogger = null;
@@ -73,9 +73,6 @@ let rxCharacteristic = null;
 let txCharacteristic = null;
 let bleLineBuffer = '';
 let commandHandler = null;
-const controlChunkSessions = new Map();
-const kControlChunkTtlMs = 15000;
-const kControlChunkMaxSessions = 64;
 
 export function __resetBleForTest() {
   bleDevice = null;
@@ -83,7 +80,6 @@ export function __resetBleForTest() {
   txCharacteristic = null;
   bleLineBuffer = '';
   commandHandler = null;
-  controlChunkSessions.clear();
   verboseDebugEnabled = false;
   debugLogger = null;
 }
@@ -438,7 +434,7 @@ async function ensureConnected(deps = {}) {
   return connectBle(deps);
 }
 
-async function writeBytesChunked(writeFn, bytes, chunkBytes = kBleControlChunkBytes) {
+async function writeBytesChunked(writeFn, bytes, chunkBytes = kBleWriteChunkBytes) {
   if (!(bytes instanceof Uint8Array)) throw new Error('invalid_bytes');
   if (bytes.length === 0) return;
   const step = Math.max(1, chunkBytes);
@@ -448,24 +444,32 @@ async function writeBytesChunked(writeFn, bytes, chunkBytes = kBleControlChunkBy
   }
 }
 
+function buildOutboundControlLines(payload) {
+  const serialized = JSON.stringify(payload);
+  return [`${serialized}\n`];
+}
+
 export async function postEvent(payload, deps = {}) {
   const encoder = deps.encoder || new TextEncoder();
   const traceId = deps.traceId || null;
   try {
     const connected = await ensureConnected(deps);
     if (!connected || !rxCharacteristic) return false;
-    const line = `${JSON.stringify(payload)}\n`;
-    const bytes = encoder.encode(line);
+    const lines = buildOutboundControlLines(payload);
+    const payloadType = payload?.type || 'unknown';
+    const bytes = encoder.encode(lines.join(''));
     const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
     const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
-    const payloadType = payload?.type || 'unknown';
+    const chunkedControl = lines.length > 1;
+    const preferWithResponse = chunkedControl && supportsWithResponse;
     debugVerbose('tx', {
       traceId,
       type: payloadType,
       bytes: bytes.length,
-      mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
+      mode: preferWithResponse ? 'withResponse' : (supportsWithoutResponse ? 'withoutResponse' : 'withResponse'),
+      line_count: lines.length
     });
-    if (supportsWithoutResponse) {
+    if (supportsWithoutResponse && !preferWithResponse) {
       emitTelemetry({
         evt: 'ble.tx',
         op: 'writeValueWithoutResponse',
@@ -475,10 +479,12 @@ export async function postEvent(payload, deps = {}) {
         bytes: bytes.length
       });
       try {
-        await writeBytesChunked(
-          (chunk) => rxCharacteristic.writeValueWithoutResponse(chunk),
-          bytes
-        );
+        for (const line of lines) {
+          await writeBytesChunked(
+            (chunk) => rxCharacteristic.writeValueWithoutResponse(chunk),
+            encoder.encode(line)
+          );
+        }
         emitTelemetry({
           evt: 'ble.tx',
           op: 'writeValueWithoutResponse',
@@ -514,10 +520,12 @@ export async function postEvent(payload, deps = {}) {
       }
     }
     try {
-      await writeBytesChunked(
-        (chunk) => rxCharacteristic.writeValueWithResponse(chunk),
-        bytes
-      );
+      for (const line of lines) {
+        await writeBytesChunked(
+          (chunk) => rxCharacteristic.writeValueWithResponse(chunk),
+          encoder.encode(line)
+        );
+      }
       emitTelemetry({
         evt: 'ble.tx',
         op: 'writeValueWithResponse',
@@ -641,71 +649,11 @@ function onBleBytes(text, onCommand) {
   for (const serialized of messages) {
     try {
       const msg = JSON.parse(serialized);
-      const maybeReassembled = maybeReassembleControlChunk(msg);
-      if (maybeReassembled) {
-        debugLog('rx json reassembled', maybeReassembled?.type || 'unknown');
-        if (typeof onCommand === 'function') onCommand(maybeReassembled);
-        continue;
-      }
-      if (msg?.type === 'ctrl.chunk') {
-        continue;
-      }
       debugLog('rx json', msg?.type || 'unknown');
       if (typeof onCommand === 'function') onCommand(msg);
     } catch {
       // Ignore malformed objects.
     }
-  }
-}
-
-function maybeReassembleControlChunk(msg) {
-  if (!msg || msg.type !== 'ctrl.chunk') return null;
-  const chunkId = Number.isInteger(msg.chunk_id) ? msg.chunk_id : null;
-  const seq = Number.isInteger(msg.seq) ? msg.seq : null;
-  const total = Number.isInteger(msg.total) ? msg.total : null;
-  const frag = typeof msg.frag === 'string' ? msg.frag : null;
-  if (chunkId === null || seq === null || total === null || frag === null) return null;
-  if (seq < 0 || total <= 0 || seq >= total) return null;
-
-  pruneControlChunkSessions();
-  let session = controlChunkSessions.get(chunkId);
-  if (!session || session.total !== total) {
-    if (controlChunkSessions.size >= kControlChunkMaxSessions) {
-      pruneControlChunkSessions(true);
-    }
-    session = {
-      total,
-      parts: new Array(total).fill(null),
-      updatedAt: Date.now()
-    };
-    controlChunkSessions.set(chunkId, session);
-  }
-  session.parts[seq] = frag;
-  session.updatedAt = Date.now();
-  if (session.parts.some((part) => part === null)) return null;
-
-  controlChunkSessions.delete(chunkId);
-  const full = session.parts.join('');
-  try {
-    return JSON.parse(full);
-  } catch {
-    return null;
-  }
-}
-
-function pruneControlChunkSessions(forceOne = false) {
-  const now = Date.now();
-  let removed = 0;
-  for (const [chunkId, session] of controlChunkSessions.entries()) {
-    if (!session || now - (session.updatedAt || 0) > kControlChunkTtlMs) {
-      controlChunkSessions.delete(chunkId);
-      removed += 1;
-      if (forceOne && removed > 0) return;
-    }
-  }
-  if (forceOne && removed === 0 && controlChunkSessions.size > 0) {
-    const first = controlChunkSessions.keys().next().value;
-    controlChunkSessions.delete(first);
   }
 }
 

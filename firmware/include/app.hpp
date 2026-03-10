@@ -26,7 +26,7 @@ class AirKvmApp {
   static constexpr size_t kMaxBleWriteLen = 512;
   static constexpr size_t kMaxBleControlBufferLen = 4096;
 #if defined(ESP32)
-  static constexpr size_t kBleRxQueueDepth = 32;
+  static constexpr size_t kBleRxQueueDepth = 96;
   struct BleRxItem {
     size_t len;
     uint8_t data[kMaxBleWriteLen];

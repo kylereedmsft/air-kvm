@@ -3,7 +3,7 @@
   "name": "AirKVM Bridge",
   "version": "0.1.0",
   "description": "POC bridge for DOM state and screenshot transfer to AirKVM controller.",
-  "permissions": ["storage", "activeTab", "scripting", "tabs", "desktopCapture"],
+  "permissions": ["storage", "activeTab", "scripting", "tabs", "desktopCapture", "debugger"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "src/service_worker.js",
