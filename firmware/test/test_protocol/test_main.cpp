@@ -106,15 +106,6 @@ void test_parse_tab_open_error() {
   TEST_ASSERT_EQUAL_STRING("open-1", cmd->request_id.c_str());
 }
 
-void test_parse_transfer_resume() {
-  const auto cmd = airkvm::ParseCommandLine(
-      "{\"type\":\"transfer.resume\",\"request_id\":\"shot-1\",\"transfer_id\":\"tx-1\",\"from_seq\":10}");
-  TEST_ASSERT_TRUE(cmd.has_value());
-  TEST_ASSERT_EQUAL_INT(
-      static_cast<int>(airkvm::CommandType::kTransferResume), static_cast<int>(cmd->type));
-  TEST_ASSERT_EQUAL_STRING("shot-1", cmd->request_id.c_str());
-}
-
 void test_parse_js_exec_request() {
   const auto cmd = airkvm::ParseCommandLine(
       "{\"type\":\"js.exec.request\",\"request_id\":\"js-1\",\"script\":\"return document.title;\"}");
@@ -180,7 +171,6 @@ int main(int, char**) {
   RUN_TEST(test_parse_window_bounds_request);
   RUN_TEST(test_parse_tab_open_request);
   RUN_TEST(test_parse_tab_open_error);
-  RUN_TEST(test_parse_transfer_resume);
   RUN_TEST(test_parse_js_exec_request);
   RUN_TEST(test_parse_js_exec_result);
   RUN_TEST(test_parse_js_exec_error);

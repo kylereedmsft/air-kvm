@@ -15,12 +15,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const kTempDir = path.resolve(__dirname, '../../temp');
 const kJsExecInlineMaxBytes = 4096;
-// FW->BLE command forwarding currently sends control JSON as single notify payloads.
-// Keep host->target transfer chunk lines small enough to fit typical BLE notify MTU envelopes.
-const kJsExecTransferChunkBytes = 32;
-const kJsExecTransferAckWindow = 1;
-const kJsExecTransferAckTimeoutMs = 4000;
-const kJsExecTransferMaxNackRetries = 4;
+const kJsExecStreamTimeoutMs = 30000;
 
 function makeToolResultText(text) {
   return { content: [{ type: 'text', text }] };
@@ -80,202 +75,6 @@ function buildDiagnostics(err) {
   return { frames, recent_frames: recent };
 }
 
-function makeTransferId() {
-  const n = Math.floor(Math.random() * 0xffffffff) >>> 0;
-  return `tx_${n.toString(16).padStart(8, '0')}`;
-}
-
-function buildJsExecTransferFrames(command) {
-  const script = typeof command?.script === 'string' ? command.script : '';
-  const scriptBytes = Buffer.from(script, 'utf8');
-  const transferId = makeTransferId();
-  const chunks = [];
-  for (let offset = 0, seq = 0; offset < scriptBytes.length; offset += kJsExecTransferChunkBytes, seq += 1) {
-    const end = Math.min(scriptBytes.length, offset + kJsExecTransferChunkBytes);
-    chunks.push({
-      type: 'transfer.chunk',
-      request_id: command.request_id,
-      transfer_id: transferId,
-      source: 'js.exec.script',
-      seq,
-      data_b64: scriptBytes.subarray(offset, end).toString('base64')
-    });
-  }
-  return {
-    transferId,
-    prelude: [
-      {
-        type: 'transfer.meta',
-        request_id: command.request_id,
-        transfer_id: transferId,
-        source: 'js.exec.script',
-        encoding: 'utf8',
-        chunk_size: kJsExecTransferChunkBytes,
-        total_chunks: chunks.length,
-        total_bytes: scriptBytes.length
-      },
-      ...chunks,
-      {
-        type: 'transfer.done',
-        request_id: command.request_id,
-        transfer_id: transferId,
-        source: 'js.exec.script',
-        total_chunks: chunks.length
-      }
-    ],
-    request: {
-      ...command,
-      script_transfer_id: transferId,
-      script: ''
-    }
-  };
-}
-
-async function sendJsExecWithTransfer(transport, command) {
-  if (typeof transport?.sendCommandNoWait !== 'function') {
-    return transport.sendCommand(command, createResponseCollector('airkvm_exec_js_tab', command));
-  }
-  const transfer = buildJsExecTransferFrames(command);
-  // Backward-compatible fallback for transports without frame wait support.
-  if (typeof transport?.waitForFrame !== 'function') {
-    for (const frame of transfer.prelude) {
-      await transport.sendCommandNoWait(frame);
-    }
-    return transport.sendCommand(transfer.request, createResponseCollector('airkvm_exec_js_tab', transfer.request));
-  }
-
-  const requestId = transfer.request.request_id;
-  const transferId = transfer.transferId;
-  const chunks = transfer.prelude.filter((frame) => frame.type === 'transfer.chunk');
-  const meta = transfer.prelude.find((frame) => frame.type === 'transfer.meta');
-  const done = transfer.prelude.find((frame) => frame.type === 'transfer.done');
-
-  const waitForTransferSignal = async () => {
-    const result = await transport.waitForFrame((msg) => {
-      if (!msg || typeof msg !== 'object') return null;
-      if (
-        msg.type === 'transfer.ack' &&
-        msg.request_id === requestId &&
-        msg.transfer_id === transferId &&
-        Number.isInteger(msg.highest_contiguous_seq)
-      ) {
-        return {
-          done: true,
-          ok: true,
-          data: { signal: 'ack', highest_contiguous_seq: msg.highest_contiguous_seq }
-        };
-      }
-      if (
-        msg.type === 'transfer.nack' &&
-        msg.request_id === requestId &&
-        msg.transfer_id === transferId &&
-        Number.isInteger(msg.seq)
-      ) {
-        return {
-          done: true,
-          ok: true,
-          data: { signal: 'nack', seq: msg.seq }
-        };
-      }
-      if (
-        msg.type === 'transfer.resume' &&
-        msg.request_id === requestId &&
-        msg.transfer_id === transferId &&
-        Number.isInteger(msg.from_seq)
-      ) {
-        return {
-          done: true,
-          ok: true,
-          data: { signal: 'resume', from_seq: msg.from_seq }
-        };
-      }
-      if (
-        msg.type === 'transfer.cancel' &&
-        msg.request_id === requestId &&
-        msg.transfer_id === transferId
-      ) {
-        return {
-          done: true,
-          ok: false,
-          data: { signal: 'cancel', detail: msg }
-        };
-      }
-      if (
-        msg.type === 'transfer.error' &&
-        msg.request_id === requestId &&
-        msg.transfer_id === transferId
-      ) {
-        return {
-          done: true,
-          ok: false,
-          data: { signal: 'error', detail: msg }
-        };
-      }
-      return null;
-    }, kJsExecTransferAckTimeoutMs);
-    return result;
-  };
-
-  await transport.sendCommandNoWait(meta);
-  let highestAckSeq = -1;
-  let nextSeqToSend = 0;
-  const nackRetriesBySeq = new Map();
-  while (highestAckSeq < chunks.length - 1) {
-    const windowEndSeq = Math.min(chunks.length - 1, highestAckSeq + kJsExecTransferAckWindow);
-    while (nextSeqToSend <= windowEndSeq) {
-      await transport.sendCommandNoWait(chunks[nextSeqToSend]);
-      nextSeqToSend += 1;
-    }
-
-    const signal = await waitForTransferSignal();
-    if (signal?.ok === false) {
-      if (signal?.data?.signal === 'cancel') {
-        const err = new Error('js_exec_script_transfer_cancelled');
-        err.detail = signal?.data?.detail || null;
-        throw err;
-      }
-      const err = new Error('js_exec_script_transfer_error');
-      err.detail = signal?.data?.detail || null;
-      throw err;
-    }
-    if (signal?.data?.signal === 'ack') {
-      highestAckSeq = Math.max(highestAckSeq, signal.data.highest_contiguous_seq);
-      continue;
-    }
-    if (signal?.data?.signal === 'resume') {
-      const fromSeq = signal.data.from_seq;
-      if (!Number.isInteger(fromSeq) || fromSeq < 0 || fromSeq >= chunks.length) {
-        const err = new Error('js_exec_script_transfer_invalid_resume');
-        err.detail = signal.data;
-        throw err;
-      }
-      nextSeqToSend = Math.min(nextSeqToSend, fromSeq);
-      highestAckSeq = Math.min(highestAckSeq, fromSeq - 1);
-      continue;
-    }
-    if (signal?.data?.signal === 'nack') {
-      const seq = signal.data.seq;
-      if (!Number.isInteger(seq) || seq < 0 || seq >= chunks.length) {
-        const err = new Error('js_exec_script_transfer_invalid_nack');
-        err.detail = signal.data;
-        throw err;
-      }
-      const retries = (nackRetriesBySeq.get(seq) || 0) + 1;
-      nackRetriesBySeq.set(seq, retries);
-      if (retries > kJsExecTransferMaxNackRetries) {
-        const err = new Error('js_exec_script_transfer_nack_retries_exhausted');
-        err.detail = { seq, retries };
-        throw err;
-      }
-      nextSeqToSend = Math.min(nextSeqToSend, seq);
-      highestAckSeq = Math.min(highestAckSeq, seq - 1);
-    }
-  }
-
-  await transport.sendCommandNoWait(done);
-  return transport.sendCommand(transfer.request, createResponseCollector('airkvm_exec_js_tab', transfer.request));
-}
-
 export function createServer({ transport, send }) {
   function onInitialize(id) {
     send({
@@ -320,8 +119,50 @@ export function createServer({ transport, send }) {
     }
 
     const line = toDeviceLine(command).trim();
-    const responseCollector = createResponseCollector(name, command);
+    const isStreamOnlyTool = (
+      name === 'airkvm_dom_snapshot' ||
+      name === 'airkvm_screenshot_tab' ||
+      name === 'airkvm_screenshot_desktop'
+    );
+    if (isStreamOnlyTool && typeof transport.streamRequest !== 'function') {
+      send({
+        jsonrpc: '2.0',
+        id,
+        result: makeToolResultJson({
+          request_id: command.request_id || null,
+          error: 'stream_transport_required',
+          detail: `${name} requires transport.streamRequest`
+        }),
+        isError: true
+      });
+      return;
+    }
+    const useStream = isStreamOnlyTool;
+
     const runTransport = (() => {
+      if (useStream) {
+        const timeoutMs = name === 'airkvm_dom_snapshot' ? 60000 : 30000;
+        return transport.streamRequest(command, { timeoutMs }).then((result) => {
+          const msg = result.data;
+          if (!msg || msg.ok === false || msg.type === 'dom.snapshot.error' || msg.type === 'screenshot.error') {
+            return { ok: false, data: { request_id: command.request_id, error: msg?.error || 'device_error', detail: msg } };
+          }
+          if (name === 'airkvm_dom_snapshot') {
+            return { ok: true, data: { request_id: command.request_id, snapshot: msg } };
+          }
+          // Screenshot — normalize the response shape for maybePersistScreenshot.
+          return {
+            ok: true,
+            data: {
+              request_id: command.request_id,
+              source: msg.source || command.source,
+              mime: msg.mime || 'image/jpeg',
+              base64: msg.data || msg.base64 || '',
+            },
+          };
+        });
+      }
+      const responseCollector = createResponseCollector(name, command);
       if (name !== 'airkvm_exec_js_tab') {
         return transport.sendCommand(command, responseCollector);
       }
@@ -329,7 +170,11 @@ export function createServer({ transport, send }) {
       if (serializedBytes <= kJsExecInlineMaxBytes) {
         return transport.sendCommand(command, responseCollector);
       }
-      return sendJsExecWithTransfer(transport, command);
+      if (typeof transport.streamSendCommand === 'function') {
+        return transport.streamSendCommand(command, responseCollector, { timeoutMs: kJsExecStreamTimeoutMs });
+      }
+      // Fallback: send inline and hope firmware buffer can handle it.
+      return transport.sendCommand(command, responseCollector);
     })();
 
     runTransport.then((result) => {

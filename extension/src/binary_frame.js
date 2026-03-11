@@ -54,6 +54,10 @@ export function encodeTransferChunkFrame({ transferIdNumeric, seq, payloadBytes 
   if (!(payloadBytes instanceof Uint8Array)) {
     throw new Error('invalid_payload');
   }
+  // Extension sends binary frames over BLE to the firmware.  Each BLE write
+  // is chunked at 160 bytes (kBleWriteChunkBytes in bridge.js).  We cap the
+  // payload at 1024 to stay well within the firmware's kMaxBinaryFrameLen
+  // (1400) after accounting for the 18-byte AK header + CRC overhead.
   if (payloadBytes.length > 1024) {
     throw new Error('payload_too_large');
   }

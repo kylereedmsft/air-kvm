@@ -279,85 +279,22 @@ std::optional<Command> ParseCommandLine(const std::string& line) {
     return cmd;
   }
 
-  if (Contains(line, "\"type\":\"transfer.meta\"")) {
-    cmd.type = CommandType::kTransferMeta;
+  if (Contains(line, "\"type\":\"stream.ack\"")) {
+    cmd.type = CommandType::kStreamAck;
     cmd.request_id = ExtractString(line, "request_id");
     cmd.raw = line;
     return cmd;
   }
 
-  if (Contains(line, "\"type\":\"transfer.chunk\"")) {
-    cmd.type = CommandType::kTransferChunk;
+  if (Contains(line, "\"type\":\"stream.nack\"")) {
+    cmd.type = CommandType::kStreamNack;
     cmd.request_id = ExtractString(line, "request_id");
     cmd.raw = line;
     return cmd;
   }
 
-  if (Contains(line, "\"type\":\"transfer.done.ack\"")) {
-    cmd.type = CommandType::kTransferDoneAck;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.done\"")) {
-    cmd.type = CommandType::kTransferDone;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.ack\"")) {
-    cmd.type = CommandType::kTransferAck;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.nack\"")) {
-    cmd.type = CommandType::kTransferNack;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.resume\"")) {
-    cmd.type = CommandType::kTransferResume;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.cancel.ok\"")) {
-    cmd.type = CommandType::kTransferCancelOk;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.cancel\"")) {
-    cmd.type = CommandType::kTransferCancel;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.reset.ok\"")) {
-    cmd.type = CommandType::kTransferResetOk;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.reset\"")) {
-    cmd.type = CommandType::kTransferReset;
-    cmd.request_id = ExtractString(line, "request_id");
-    cmd.raw = line;
-    return cmd;
-  }
-
-  if (Contains(line, "\"type\":\"transfer.error\"")) {
-    cmd.type = CommandType::kTransferError;
+  if (Contains(line, "\"type\":\"stream.reset\"")) {
+    cmd.type = CommandType::kStreamReset;
     cmd.request_id = ExtractString(line, "request_id");
     cmd.raw = line;
     return cmd;

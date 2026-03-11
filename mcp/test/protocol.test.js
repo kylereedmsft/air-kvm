@@ -30,6 +30,16 @@ test('validateAgentCommand accepts key.type with punctuation', () => {
   assert.equal(result.ok, true);
 });
 
+test('validateAgentCommand accepts key.type with backslash escape sequences', () => {
+  const result = validateAgentCommand({ type: 'key.type', text: 'user\\tpass\\n' });
+  assert.equal(result.ok, true);
+});
+
+test('validateAgentCommand accepts key.type with named key braces', () => {
+  const result = validateAgentCommand({ type: 'key.type', text: 'hello{Enter}world' });
+  assert.equal(result.ok, true);
+});
+
 test('toDeviceLine returns JSONL', () => {
   const line = toDeviceLine({ type: 'state.request' });
   assert.equal(line, '{"type":"state.request"}\n');

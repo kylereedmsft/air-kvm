@@ -7,6 +7,10 @@ const kFrameTypeLogText = 3;
 const kFixedHeaderLen = 14;
 const kCrcLen = 4;
 const kMinFrameLen = kFixedHeaderLen + kCrcLen;
+// MCP receives binary frames from the extension via UART.  The firmware
+// forwards complete AK frames as-is, so we can accept the full UART line
+// buffer size (1024 bytes on the firmware TxFrame).  We use 4096 here to
+// accommodate any future buffer increases without re-deployment.
 const kMaxPayloadLen = 4096;
 
 let crcTable = null;

@@ -450,6 +450,80 @@ function buildOutboundControlLines(payload) {
   return [`${serialized}\n`];
 }
 
+// Shared write-with-fallback-and-telemetry helper used by postEvent/postBinary.
+// writeFnNoResp / writeFnResp: async callbacks performing the actual BLE write.
+// skipNoResp: when true, skip the withoutResponse attempt entirely.
+async function bleWrite({ writeFnNoResp, writeFnResp, skipNoResp, traceId, payloadType, byteCount }) {
+  const supportsNoResp = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
+  if (supportsNoResp && !skipNoResp) {
+    emitTelemetry({
+      evt: 'ble.tx',
+      op: 'writeValueWithoutResponse',
+      result: 'attempt',
+      trace_id: traceId,
+      payload_type: payloadType,
+      bytes: byteCount
+    });
+    try {
+      await writeFnNoResp();
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithoutResponse',
+        result: 'ok',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: byteCount
+      });
+      return;
+    } catch (err) {
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithoutResponse',
+        result: 'fail',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: byteCount,
+        error: String(err?.message || err)
+      });
+      emitTelemetry({
+        evt: 'ble.tx',
+        op: 'writeValueWithoutResponse',
+        result: 'fallback',
+        to: 'writeValueWithResponse',
+        trace_id: traceId,
+        payload_type: payloadType,
+        bytes: byteCount
+      });
+      debugVerbose('tx withoutResponse failed, falling back', {
+        traceId,
+        error: String(err?.message || err)
+      });
+    }
+  }
+  try {
+    await writeFnResp();
+    emitTelemetry({
+      evt: 'ble.tx',
+      op: 'writeValueWithResponse',
+      result: 'ok',
+      trace_id: traceId,
+      payload_type: payloadType,
+      bytes: byteCount
+    });
+  } catch (err) {
+    emitTelemetry({
+      evt: 'ble.tx',
+      op: 'writeValueWithResponse',
+      result: 'fail',
+      trace_id: traceId,
+      payload_type: payloadType,
+      bytes: byteCount,
+      error: String(err?.message || err)
+    });
+    throw err;
+  }
+}
+
 export async function postEvent(payload, deps = {}) {
   const encoder = deps.encoder || new TextEncoder();
   const traceId = deps.traceId || null;
@@ -470,83 +544,22 @@ export async function postEvent(payload, deps = {}) {
       mode: preferWithResponse ? 'withResponse' : (supportsWithoutResponse ? 'withoutResponse' : 'withResponse'),
       line_count: lines.length
     });
-    if (supportsWithoutResponse && !preferWithResponse) {
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithoutResponse',
-        result: 'attempt',
-        trace_id: traceId,
-        payload_type: payloadType,
-        bytes: bytes.length
-      });
-      try {
-        for (const line of lines) {
-          await writeBytesChunked(
-            (chunk) => rxCharacteristic.writeValueWithoutResponse(chunk),
-            encoder.encode(line)
-          );
-        }
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'ok',
-          trace_id: traceId,
-          payload_type: payloadType,
-          bytes: bytes.length
-        });
-        return true;
-      } catch (err) {
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'fail',
-          trace_id: traceId,
-          payload_type: payloadType,
-          bytes: bytes.length,
-          error: String(err?.message || err)
-        });
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'fallback',
-          to: 'writeValueWithResponse',
-          trace_id: traceId,
-          payload_type: payloadType,
-          bytes: bytes.length
-        });
-        debugVerbose('tx withoutResponse failed, falling back', {
-          traceId,
-          error: String(err?.message || err)
-        });
-      }
-    }
-    try {
+    const writeAllLines = (method) => async () => {
       for (const line of lines) {
         await writeBytesChunked(
-          (chunk) => rxCharacteristic.writeValueWithResponse(chunk),
+          (chunk) => rxCharacteristic[method](chunk),
           encoder.encode(line)
         );
       }
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithResponse',
-        result: 'ok',
-        trace_id: traceId,
-        payload_type: payloadType,
-        bytes: bytes.length
-      });
-    } catch (err) {
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithResponse',
-        result: 'fail',
-        trace_id: traceId,
-        payload_type: payloadType,
-        bytes: bytes.length,
-        error: String(err?.message || err)
-      });
-      throw err;
-    }
+    };
+    await bleWrite({
+      writeFnNoResp: writeAllLines('writeValueWithoutResponse'),
+      writeFnResp: writeAllLines('writeValueWithResponse'),
+      skipNoResp: preferWithResponse,
+      traceId,
+      payloadType,
+      byteCount: bytes.length
+    });
     return true;
   } catch {
     debugLog('postEvent failed', { traceId, type: payload?.type || 'unknown' });
@@ -561,79 +574,19 @@ export async function postBinary(bytes, deps = {}) {
     if (!connected || !rxCharacteristic) return false;
     if (!(bytes instanceof Uint8Array)) return false;
     const supportsWithoutResponse = typeof rxCharacteristic.writeValueWithoutResponse === 'function';
-    const supportsWithResponse = typeof rxCharacteristic.writeValueWithResponse === 'function';
     debugVerbose('tx binary', {
       traceId,
       bytes: bytes.length,
       mode: supportsWithoutResponse ? 'withoutResponse' : 'withResponse'
     });
-    if (supportsWithoutResponse) {
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithoutResponse',
-        result: 'attempt',
-        trace_id: traceId,
-        payload_type: 'binary',
-        bytes: bytes.length
-      });
-      try {
-        await rxCharacteristic.writeValueWithoutResponse(bytes);
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'ok',
-          trace_id: traceId,
-          payload_type: 'binary',
-          bytes: bytes.length
-        });
-        return true;
-      } catch (err) {
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'fail',
-          trace_id: traceId,
-          payload_type: 'binary',
-          bytes: bytes.length,
-          error: String(err?.message || err)
-        });
-        emitTelemetry({
-          evt: 'ble.tx',
-          op: 'writeValueWithoutResponse',
-          result: 'fallback',
-          to: 'writeValueWithResponse',
-          trace_id: traceId,
-          payload_type: 'binary',
-          bytes: bytes.length
-        });
-        debugVerbose('tx binary withoutResponse failed, falling back', {
-          traceId,
-          error: String(err?.message || err)
-        });
-      }
-    }
-    try {
-      await rxCharacteristic.writeValueWithResponse(bytes);
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithResponse',
-        result: 'ok',
-        trace_id: traceId,
-        payload_type: 'binary',
-        bytes: bytes.length
-      });
-    } catch (err) {
-      emitTelemetry({
-        evt: 'ble.tx',
-        op: 'writeValueWithResponse',
-        result: 'fail',
-        trace_id: traceId,
-        payload_type: 'binary',
-        bytes: bytes.length,
-        error: String(err?.message || err)
-      });
-      throw err;
-    }
+    await bleWrite({
+      writeFnNoResp: () => rxCharacteristic.writeValueWithoutResponse(bytes),
+      writeFnResp: () => rxCharacteristic.writeValueWithResponse(bytes),
+      skipNoResp: false,
+      traceId,
+      payloadType: 'binary',
+      byteCount: bytes.length
+    });
     return true;
   } catch {
     debugLog('postBinary failed', { traceId });

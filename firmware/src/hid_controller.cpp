@@ -121,6 +121,11 @@ constexpr KeyAlias kNamedKeyAliases[] = {
     {"ArrowLeft", 0x00, 0x50},
     {"ArrowDown", 0x00, 0x51},
     {"ArrowUp", 0x00, 0x52},
+    // Short arrow aliases for {Up}/{Down}/{Left}/{Right} escape sequences.
+    {"Up", 0x00, 0x52},
+    {"Down", 0x00, 0x51},
+    {"Left", 0x00, 0x50},
+    {"Right", 0x00, 0x4F},
     {"CapsLock", 0x00, 0x39},
     {"NumLock", 0x00, 0x53},
     {"ScrollLock", 0x00, 0x47},
@@ -507,10 +512,60 @@ bool HidController::SendKeyType(const String& text) {
     return false;
   }
 
-  for (size_t i = 0; i < text.length(); i += 1) {
+  // Walk the text with escape-aware parsing:
+  //   \n → Enter, \t → Tab, \\ → literal backslash
+  //   {Enter}, {Tab}, {Escape}, {Up}, … → named special keys
+  // Unknown escapes or brace names are sent literally.
+  size_t i = 0;
+  while (i < text.length()) {
     uint8_t modifier = 0;
     uint8_t keycode = 0;
-    const String key = String(text.charAt(static_cast<unsigned int>(i)));
+    String key;
+
+    const char c = text.charAt(static_cast<unsigned int>(i));
+
+    if (c == '\\' && i + 1 < text.length()) {
+      const char next = text.charAt(static_cast<unsigned int>(i + 1));
+      if (next == 'n') {
+        key = "Enter";
+        i += 2;
+      } else if (next == 't') {
+        key = "Tab";
+        i += 2;
+      } else if (next == '\\') {
+        key = String('\\');
+        i += 2;
+      } else {
+        // Unknown escape — send the backslash literally.
+        key = String(c);
+        i += 1;
+      }
+    } else if (c == '{') {
+      // Named key sequence: scan for closing '}'.
+      const int close = text.indexOf('}', static_cast<unsigned int>(i + 1));
+      if (close > static_cast<int>(i + 1)) {
+        const String name = text.substring(
+            static_cast<unsigned int>(i + 1), static_cast<unsigned int>(close));
+        uint8_t probe_mod = 0;
+        uint8_t probe_key = 0;
+        if (ResolveKeyTap(name, &probe_mod, &probe_key)) {
+          key = name;
+          i = static_cast<size_t>(close) + 1;
+        } else {
+          // Unrecognised name — send '{' literally.
+          key = String(c);
+          i += 1;
+        }
+      } else {
+        // No closing brace — send '{' literally.
+        key = String(c);
+        i += 1;
+      }
+    } else {
+      key = String(c);
+      i += 1;
+    }
+
     if (!ResolveKeyTap(key, &modifier, &keycode)) {
       EmitInjectTelemetry("key.type", false, "invalid_char");
       return false;

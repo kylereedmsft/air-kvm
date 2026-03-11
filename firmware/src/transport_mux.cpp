@@ -61,7 +61,7 @@ String ExtractRequestIdField(const char* payload) {
 }
 
 bool ShouldTraceBleControlForward(const String& type) {
-  return type.startsWith("transfer.") || type == "screenshot.request" || type == "state.request";
+  return type == "screenshot.request" || type == "state.request";
 }
 
 String BuildBleNotifyTelemetry(size_t len, const char* result, const char* att_error = nullptr) {

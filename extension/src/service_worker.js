@@ -1,13 +1,10 @@
-import { dataUrlToMetaAndChunks, resolveScreenshotConfig } from './screenshot_protocol.js';
-import { encodeTransferChunkFrame, makeTransferId } from './binary_frame.js';
+import { resolveScreenshotConfig } from './screenshot_protocol.js';
+import { StreamSender, StreamReceiver } from './stream.js';
 const kBleBridgePagePath = 'src/ble_bridge.html';
 const kDebugDefault = false;
 const kDebugStorageKey = 'airkvmVerboseBridgeLog';
 const kScreenshotCaptureTimeoutMs = 25000;
 const kScreenshotStageTimeoutMs = 10000;
-const kTransferAckWindow = 8;
-const kInboundTransferAckStride = 8;
-const kTransferTtlMs = 2 * 60 * 1000;
 const kJsExecScriptMinChars = 1;
 const kJsExecScriptMaxChars = 12000;
 const kJsExecTimeoutMsMin = 50;
@@ -25,10 +22,8 @@ const kDomSnapshotActionableLimitPerFrame = 50;
 const kDomSnapshotMaxTransferBytes = 2 * 1024 * 1024;
 let lastAutomationTabId = null;
 let bridgeTraceSeq = 0;
-let screenshotInFlight = false;
 let jsExecInFlight = false;
-const screenshotTransfers = new Map();
-const inboundScriptTransfers = new Map();
+let inboundStreamReceiver = null;
 const kSwInstanceId = `sw_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
 let debugEnabled = kDebugDefault;
 
@@ -46,10 +41,7 @@ function debugLog(...args) {
 }
 
 function activeTransferIds() {
-  return [
-    ...Array.from(screenshotTransfers.keys()),
-    ...Array.from(inboundScriptTransfers.keys())
-  ];
+  return [];
 }
 
 async function writeSwBreadcrumb(event, detail = null) {
@@ -439,22 +431,6 @@ function makeRequestId() {
   return `${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`;
 }
 
-function pruneScreenshotTransfers(nowTs = Date.now()) {
-  for (const [transferId, session] of screenshotTransfers.entries()) {
-    if (!session || nowTs - (session.updatedAt || 0) > kTransferTtlMs) {
-      screenshotTransfers.delete(transferId);
-    }
-  }
-}
-
-function getSingleActiveTransfer() {
-  pruneScreenshotTransfers();
-  for (const [transferId, session] of screenshotTransfers.entries()) {
-    if (session && transferId) return session;
-  }
-  return null;
-}
-
 function withTimeout(promise, ms, errorCode) {
   let timeoutId = null;
   const timeoutPromise = new Promise((_, reject) => {
@@ -495,22 +471,6 @@ function normalizeJsExecCommand(command) {
   };
 }
 
-function pruneInboundScriptTransfers(nowTs = Date.now()) {
-  for (const [transferId, session] of inboundScriptTransfers.entries()) {
-    if (!session || nowTs - (session.updatedAt || 0) > kTransferTtlMs) {
-      inboundScriptTransfers.delete(transferId);
-    }
-  }
-}
-
-function highestContiguousScriptSeq(session) {
-  let seq = -1;
-  while (session.chunksBySeq.has(seq + 1)) {
-    seq += 1;
-  }
-  return seq;
-}
-
 function decodeBase64ToBytes(text) {
   const raw = atob(String(text || ''));
   const out = new Uint8Array(raw.length);
@@ -518,41 +478,6 @@ function decodeBase64ToBytes(text) {
     out[i] = raw.charCodeAt(i);
   }
   return out;
-}
-
-function resolveJsExecScript(command) {
-  if (typeof command?.script === 'string' && command.script.length > 0) {
-    return command.script;
-  }
-  const transferId = typeof command?.script_transfer_id === 'string' ? command.script_transfer_id : null;
-  if (!transferId) {
-    throw new Error('invalid_js_exec_request');
-  }
-  pruneInboundScriptTransfers();
-  const session = inboundScriptTransfers.get(transferId);
-  if (!session) {
-    throw new Error('js_exec_script_transfer_not_found');
-  }
-  if (!session.done || !Number.isInteger(session.totalChunks) || session.totalChunks < 0) {
-    throw new Error('js_exec_script_transfer_incomplete');
-  }
-  const ordered = [];
-  for (let seq = 0; seq < session.totalChunks; seq += 1) {
-    const chunk = session.chunksBySeq.get(seq);
-    if (!(chunk instanceof Uint8Array)) {
-      throw new Error('js_exec_script_transfer_incomplete');
-    }
-    ordered.push(chunk);
-  }
-  inboundScriptTransfers.delete(transferId);
-  const totalBytes = ordered.reduce((sum, b) => sum + b.length, 0);
-  const merged = new Uint8Array(totalBytes);
-  let offset = 0;
-  for (const bytes of ordered) {
-    merged.set(bytes, offset);
-    offset += bytes.length;
-  }
-  return new TextDecoder().decode(merged);
 }
 
 async function executeScriptViaCdp(tabId, script, maxResultChars) {
@@ -622,7 +547,8 @@ async function sendJsExec(command) {
   }
   jsExecInFlight = true;
   try {
-    const script = resolveJsExecScript(command);
+    const script = typeof command?.script === 'string' ? command.script : '';
+    if (!script) throw new Error('invalid_js_exec_request');
     const normalized = normalizeJsExecCommand({ ...command, script });
     requestId = normalized.requestId;
     resolvedTabId = normalized.tabId;
@@ -702,48 +628,30 @@ async function postBinaryOrThrow(bytes) {
   }
 }
 
-async function pumpTransferSession(session) {
-  if (!session) return;
-  if (session.sending) {
-    session.pumpRequested = true;
-    return;
+let streamSender = null;
+function getStreamSender() {
+  if (!streamSender) {
+    streamSender = new StreamSender({
+      writeJsonFn: async (obj) => { await postEventOrThrow(obj); },
+      writeBinaryFn: async (bytes) => { await postBinaryOrThrow(bytes); },
+      chunkSize: 160,
+    });
   }
-  session.sending = true;
-  try {
-    while (session.nextSeqToSend < session.totalChunks) {
-      const maxAllowedSeq = session.highestAckSeq + kTransferAckWindow;
-      if (session.nextSeqToSend > maxAllowedSeq) {
-        break;
-      }
-      const frame = session.framesBySeq.get(session.nextSeqToSend);
-      session.nextSeqToSend += 1;
-      if (!frame) continue;
-      await postBinaryOrThrow(frame);
-      session.updatedAt = Date.now();
+  return streamSender;
+}
+
+function getStreamReceiver() {
+  if (inboundStreamReceiver) return inboundStreamReceiver;
+  inboundStreamReceiver = new StreamReceiver({
+    writeJsonFn: async (obj) => postEventViaBridge(obj),
+  });
+  inboundStreamReceiver.onMessage((msg) => {
+    const handler = kBleCommandHandlers[msg?.type];
+    if (typeof handler === 'function') {
+      handler(msg);
     }
-    if (session.nextSeqToSend >= session.totalChunks && !session.doneSent) {
-      await postEventOrThrow({
-        type: 'transfer.done',
-        request_id: session.requestId,
-        transfer_id: session.transferId,
-        source: session.source,
-        total_chunks: session.totalChunks
-      }, 'transfer_done_send_failed');
-      session.doneSent = true;
-      session.updatedAt = Date.now();
-      debugLog('transfer done sent', {
-        requestId: session.requestId,
-        transferId: session.transferId,
-        highestAckSeq: session.highestAckSeq
-      });
-    }
-  } finally {
-    session.sending = false;
-    if (session.pumpRequested) {
-      session.pumpRequested = false;
-      await pumpTransferSession(session);
-    }
-  }
+  });
+  return inboundStreamReceiver;
 }
 
 async function captureTabPng(config) {
@@ -864,10 +772,6 @@ async function compressDataUrlToJpeg(dataUrl, config) {
 async function sendDomSnapshot(command) {
   debugLog('sendDomSnapshot start', command);
   const requestId = command.request_id || makeRequestId();
-  const activeTransfer = getSingleActiveTransfer();
-  if (activeTransfer) {
-    throw new Error(`transfer_busy:${activeTransfer.transferId}`);
-  }
   const tab = await resolveTargetTab(command.tab_id || null);
   if (!tab?.id) throw new Error('active_tab_not_found');
   lastAutomationTabId = tab.id;
@@ -963,305 +867,62 @@ async function sendDomSnapshot(command) {
     throw new Error('dom_snapshot_too_large');
   }
 
-  pruneScreenshotTransfers();
-  const transferIdMeta = makeTransferId();
-  const transferId = transferIdMeta.string;
-  const transferIdNumeric = transferIdMeta.numeric;
-  const chunkSize = 160;
-  const totalChunks = Math.ceil(snapshotBytes.length / chunkSize);
-  const framesBySeq = new Map();
-  for (let seq = 0; seq < totalChunks; seq += 1) {
-    const start = seq * chunkSize;
-    const end = Math.min(snapshotBytes.length, start + chunkSize);
-    const payloadBytes = snapshotBytes.slice(start, end);
-    framesBySeq.set(
-      seq,
-      encodeTransferChunkFrame({
-        transferIdNumeric,
-        seq,
-        payloadBytes
-      })
-    );
-  }
-  const session = {
-    transferId,
-    transferIdNumeric,
-    requestId,
-    source: 'dom',
-    meta: null,
-    framesBySeq,
-    totalChunks,
-    updatedAt: Date.now(),
-    highestAckSeq: -1,
-    nextSeqToSend: 0,
-    doneSent: false,
-    sending: false,
-    pumpRequested: false
-  };
-  screenshotTransfers.set(transferId, session);
-  await postEventOrThrow({
-    type: 'transfer.meta',
-    request_id: requestId,
-    transfer_id: transferId,
-    source: 'dom',
-    mime: 'application/json',
-    encoding: 'bin',
-    chunk_size: chunkSize,
-    total_chunks: totalChunks,
-    total_bytes: snapshotBytes.length,
-    tab_id: tab.id,
-    ts: Date.now()
-  }, 'dom_snapshot_meta_send_failed');
-  await pumpTransferSession(session);
+  const sender = getStreamSender();
+  await sender.send(snapshotPayload);
 }
 
 async function sendScreenshot(command) {
-  const activeTransfer = getSingleActiveTransfer();
-  if (activeTransfer) {
-    throw new Error(`screenshot_transfer_busy:${activeTransfer.transferId}`);
-  }
-  if (screenshotInFlight) {
-    throw new Error('screenshot_busy');
-  }
-  screenshotInFlight = true;
   debugLog('sendScreenshot start', command);
-  try {
-    const source = command.source === 'desktop' ? 'desktop' : 'tab';
-    const requestId = command.request_id || makeRequestId();
-    const config = resolveScreenshotConfig(command);
-    config.tabId = Number.isInteger(command?.tab_id) ? command.tab_id : null;
-    debugLog('sendScreenshot capture begin', {
-      source,
-      requestId,
-      tabId: config.tabId || null,
-      encodingRequested: config.encoding
-    });
-    const encoded = await withTimeout(
-      source === 'desktop' ? captureDesktopPng(config) : captureTabPng(config),
-      kScreenshotCaptureTimeoutMs,
-      'screenshot_capture_timeout'
-    );
-    debugLog('sendScreenshot capture done', {
-      source,
-      requestId,
-      encodedWidth: encoded.encodedWidth,
-      encodedHeight: encoded.encodedHeight,
-      encodedQuality: encoded.encodedQuality
-    });
-    const transferIdMeta = makeTransferId();
-    const { meta, chunks } = dataUrlToMetaAndChunks(
-      encoded.dataUrl,
-      requestId,
-      source,
-      transferIdMeta.string,
-      encoded,
-      160
-    );
-    debugLog('sendScreenshot encoded', {
-      source,
-      requestId,
-      encoding: meta.encoding,
-      chunks: chunks.length,
-      totalBytes: meta.total_bytes
-    });
-    pruneScreenshotTransfers();
-    const transferId = transferIdMeta.string;
-    const transferIdNumeric = transferIdMeta.numeric;
-    const framesBySeq = new Map();
-    for (const chunk of chunks) {
-      framesBySeq.set(
-        chunk.seq,
-        encodeTransferChunkFrame({
-          transferIdNumeric,
-          seq: chunk.seq,
-          payloadBytes: chunk.bytes
-        })
-      );
-    }
-    const session = {
-      transferId,
-      transferIdNumeric,
-      requestId,
-      source,
-      meta,
-      framesBySeq,
-      totalChunks: chunks.length,
-      updatedAt: Date.now(),
-      highestAckSeq: -1,
-      nextSeqToSend: 0,
-      doneSent: false,
-      sending: false,
-      pumpRequested: false
-    };
-    screenshotTransfers.set(transferId, session);
-    debugLog('transfer session created', {
-      requestId,
-      transferId,
-      totalChunks: chunks.length
-    });
-    void writeSwBreadcrumb('transfer_created', {
-      request_id: requestId,
-      transfer_id: transferId,
-      total_chunks: chunks.length
-    });
-
-    await postEventOrThrow({
-      type: 'transfer.meta',
-      ...meta
-    }, 'transfer_meta_send_failed');
-    debugLog('transfer window start', {
-      requestId,
-      transferId,
-      window: kTransferAckWindow
-    });
-    await pumpTransferSession(session);
-  } finally {
-    screenshotInFlight = false;
-  }
-}
-
-async function sendTransferError(command, code, detail = null) {
-  await postEventViaBridge({
-    type: 'transfer.error',
-    request_id: command?.request_id || null,
-    transfer_id: command?.transfer_id || null,
-    source: command?.source || null,
-    code,
-    detail,
-    ts: Date.now()
+  const source = command.source === 'desktop' ? 'desktop' : 'tab';
+  const requestId = command.request_id || makeRequestId();
+  const config = resolveScreenshotConfig(command);
+  config.tabId = Number.isInteger(command?.tab_id) ? command.tab_id : null;
+  debugLog('sendScreenshot capture begin', {
+    source,
+    requestId,
+    tabId: config.tabId || null,
+    encodingRequested: config.encoding
   });
-}
+  const encoded = await withTimeout(
+    source === 'desktop' ? captureDesktopPng(config) : captureTabPng(config),
+    kScreenshotCaptureTimeoutMs,
+    'screenshot_capture_timeout'
+  );
+  debugLog('sendScreenshot capture done', {
+    source,
+    requestId,
+    encodedWidth: encoded.encodedWidth,
+    encodedHeight: encoded.encodedHeight,
+    encodedQuality: encoded.encodedQuality
+  });
 
-async function handleTransferResume(command) {
-  pruneScreenshotTransfers();
-  const transferId = command?.transfer_id;
-  const session = transferId ? screenshotTransfers.get(transferId) : null;
-  if (!session) {
-    const breadcrumb = await readSwBreadcrumb();
-    const detail = {
-      instance_id: kSwInstanceId,
-      active_transfer_ids: activeTransferIds(),
-      last_breadcrumb: breadcrumb
-    };
-    debugLog('transfer resume missing session', {
-      requestId: command?.request_id || null,
-      transferId: transferId || null,
-      detail
-    });
-    await sendTransferError(command, 'no_such_transfer', detail);
-    return;
-  }
-  if (command?.request_id && session.requestId !== command.request_id) {
-    await sendTransferError(command, 'request_id_mismatch');
-    return;
-  }
-  const fromSeq = Number.isInteger(command?.from_seq)
-    ? Math.max(0, command.from_seq)
-    : Math.max(0, session.highestAckSeq + 1);
-  session.nextSeqToSend = fromSeq;
-  session.doneSent = false;
-  session.updatedAt = Date.now();
-  debugLog('transfer resume start', {
-    requestId: session.requestId,
-    transferId: session.transferId,
-    fromSeq,
-    totalChunks: session.totalChunks
-  });
-  void writeSwBreadcrumb('transfer_resume', {
-    request_id: session.requestId,
-    transfer_id: session.transferId,
-    from_seq: fromSeq
-  });
-  await pumpTransferSession(session);
-}
+  const comma = encoded.dataUrl.indexOf(',');
+  if (comma === -1) throw new Error('screenshot_invalid_data_url');
+  const header = encoded.dataUrl.slice(0, comma);
+  const base64Data = encoded.dataUrl.slice(comma + 1);
+  const mimeMatch = /^data:([^;]+);base64$/i.exec(header);
+  const mime = mimeMatch?.[1] || 'image/jpeg';
 
-async function handleTransferAck(command) {
-  pruneScreenshotTransfers();
-  const transferId = command?.transfer_id;
-  const session = transferId ? screenshotTransfers.get(transferId) : null;
-  if (!session) {
-    await sendTransferError(command, 'no_such_transfer');
-    return;
-  }
-  if (Number.isInteger(command?.highest_contiguous_seq)) {
-    session.highestAckSeq = Math.max(session.highestAckSeq, command.highest_contiguous_seq);
-  }
-  session.updatedAt = Date.now();
-  void writeSwBreadcrumb('transfer_ack', {
-    request_id: session.requestId,
-    transfer_id: session.transferId,
-    highest_contiguous_seq: session.highestAckSeq
-  });
-  await pumpTransferSession(session);
-}
-
-async function handleTransferDoneAck(command) {
-  pruneScreenshotTransfers();
-  const transferId = command?.transfer_id;
-  const session = transferId ? screenshotTransfers.get(transferId) : null;
-  if (!session) {
-    await sendTransferError(command, 'no_such_transfer');
-    return;
-  }
-  screenshotTransfers.delete(transferId);
-  void writeSwBreadcrumb('transfer_done_ack', {
-    request_id: session.requestId,
-    transfer_id: transferId
-  });
-  debugLog('transfer done ack', {
-    requestId: session.requestId,
-    transferId
-  });
-}
-
-async function handleTransferNack(command) {
-  pruneScreenshotTransfers();
-  const transferId = command?.transfer_id;
-  const seq = command?.seq;
-  const session = transferId ? screenshotTransfers.get(transferId) : null;
-  if (!session) {
-    await sendTransferError(command, 'no_such_transfer');
-    return;
-  }
-  if (!Number.isInteger(seq) || seq < 0 || seq >= session.totalChunks) {
-    await sendTransferError(command, 'invalid_seq');
-    return;
-  }
-  const frame = session.framesBySeq.get(seq);
-  if (!frame) {
-    await sendTransferError(command, 'no_such_chunk');
-    return;
-  }
-  session.updatedAt = Date.now();
-  debugLog('transfer nack resend', {
-    requestId: session.requestId,
-    transferId,
-    seq
-  });
-  await postBinaryOrThrow(frame);
-  await pumpTransferSession(session);
-}
-
-async function handleTransferCancel(command) {
-  const transferId = command?.transfer_id;
-  if (!transferId || !screenshotTransfers.has(transferId)) {
-    await sendTransferError(command, 'no_such_transfer');
-    return;
-  }
-  screenshotTransfers.delete(transferId);
-  void writeSwBreadcrumb('transfer_cancel', { transfer_id: transferId });
-  await postEventViaBridge({
-    type: 'transfer.cancel.ok',
-    request_id: command?.request_id || null,
-    transfer_id: transferId,
-    ts: Date.now()
+  const sender = getStreamSender();
+  await sender.send({
+    type: 'screenshot.response',
+    request_id: requestId,
+    source,
+    mime,
+    data: base64Data,
+    encoded_width: encoded.encodedWidth,
+    encoded_height: encoded.encodedHeight,
+    source_width: encoded.sourceWidth,
+    source_height: encoded.sourceHeight,
+    encoded_quality: encoded.encodedQuality,
+    encode_attempts: encoded.attempts,
+    ts: Date.now(),
   });
 }
 
 async function handleTransferReset(command) {
-  screenshotTransfers.clear();
-  inboundScriptTransfers.clear();
-  screenshotInFlight = false;
+  if (inboundStreamReceiver) inboundStreamReceiver.reset();
+  if (streamSender) streamSender.reset();
   void writeSwBreadcrumb('transfer_reset', {
     request_id: command?.request_id || null
   });
@@ -1491,152 +1152,33 @@ const kBleCommandHandlers = {
       });
     }
   ),
-  'transfer.resume': (command) => runBridgeHandler(
-    command,
-    'handleTransferResume',
-    handleTransferResume,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_resume_failed', detail)
-  ),
-  'transfer.meta': (command) => runBridgeHandler(
-    command,
-    'handleTransferMeta',
-    async (cmd) => {
-      if (cmd?.source !== 'js.exec.script') return;
-      const transferId = typeof cmd?.transfer_id === 'string' ? cmd.transfer_id : null;
-      const requestId = typeof cmd?.request_id === 'string' ? cmd.request_id : null;
-      const totalChunks = Number.isInteger(cmd?.total_chunks) ? cmd.total_chunks : null;
-      if (!transferId || !requestId || totalChunks === null || totalChunks < 0) {
-        throw new Error('invalid_transfer_meta');
-      }
-      pruneInboundScriptTransfers();
-      inboundScriptTransfers.set(transferId, {
-        transferId,
-        requestId,
-        totalChunks,
-        totalBytes: Number.isInteger(cmd?.total_bytes) ? cmd.total_bytes : null,
-        chunksBySeq: new Map(),
-        highestAckSeq: -1,
-        done: false,
-        updatedAt: Date.now()
-      });
-    },
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_meta_failed', detail)
-  ),
-  'transfer.chunk': (command) => runBridgeHandler(
-    command,
-    'handleTransferChunk',
-    async (cmd) => {
-      if (cmd?.source !== 'js.exec.script') return;
-      const transferId = typeof cmd?.transfer_id === 'string' ? cmd.transfer_id : null;
-      const seq = Number.isInteger(cmd?.seq) ? cmd.seq : null;
-      const dataB64 = typeof cmd?.data_b64 === 'string' ? cmd.data_b64 : null;
-      if (!transferId || seq === null || seq < 0 || !dataB64) {
-        throw new Error('invalid_transfer_chunk');
-      }
-      pruneInboundScriptTransfers();
-      const session = inboundScriptTransfers.get(transferId);
-      if (!session) {
-        throw new Error('no_such_transfer');
-      }
-      if (seq >= session.totalChunks) {
-        throw new Error('invalid_seq');
-      }
-      const beforeHighestSeq = highestContiguousScriptSeq(session);
-      session.chunksBySeq.set(seq, decodeBase64ToBytes(dataB64));
-      if (seq > beforeHighestSeq + 1) {
-        await postEventViaBridge({
-          type: 'transfer.nack',
-          request_id: session.requestId,
-          transfer_id: session.transferId,
-          source: 'js.exec.script',
-          seq: beforeHighestSeq + 1,
-          ts: Date.now()
-        });
-      }
-      const highestSeq = highestContiguousScriptSeq(session);
-      const shouldAck = (
-        highestSeq > session.highestAckSeq
-        && (
-          (highestSeq - session.highestAckSeq) >= kInboundTransferAckStride
-          || highestSeq + 1 >= session.totalChunks
-        )
-      );
-      if (shouldAck) {
-        session.highestAckSeq = highestSeq;
-        await postEventViaBridge({
-          type: 'transfer.ack',
-          request_id: session.requestId,
-          transfer_id: session.transferId,
-          source: 'js.exec.script',
-          highest_contiguous_seq: highestSeq,
-          ts: Date.now()
-        });
-      }
-      session.updatedAt = Date.now();
-    },
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_chunk_failed', detail)
-  ),
-  'transfer.done': (command) => runBridgeHandler(
-    command,
-    'handleInboundTransferDone',
-    async (cmd) => {
-      if (cmd?.source !== 'js.exec.script') return;
-      const transferId = typeof cmd?.transfer_id === 'string' ? cmd.transfer_id : null;
-      if (!transferId) {
-        throw new Error('invalid_transfer_done');
-      }
-      pruneInboundScriptTransfers();
-      const session = inboundScriptTransfers.get(transferId);
-      if (!session) {
-        throw new Error('no_such_transfer');
-      }
-      const highestSeq = highestContiguousScriptSeq(session);
-      if (highestSeq + 1 < session.totalChunks) {
-        await postEventViaBridge({
-          type: 'transfer.nack',
-          request_id: session.requestId,
-          transfer_id: session.transferId,
-          source: 'js.exec.script',
-          seq: highestSeq + 1,
-          ts: Date.now()
-        });
-        session.updatedAt = Date.now();
-        return;
-      }
-      session.done = true;
-      session.updatedAt = Date.now();
-    },
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_done_failed', detail)
-  ),
-  'transfer.ack': (command) => runBridgeHandler(
-    command,
-    'handleTransferAck',
-    handleTransferAck,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_ack_failed', detail)
-  ),
-  'transfer.done.ack': (command) => runBridgeHandler(
-    command,
-    'handleTransferDoneAck',
-    handleTransferDoneAck,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_done_ack_failed', detail)
-  ),
-  'transfer.nack': (command) => runBridgeHandler(
-    command,
-    'handleTransferNack',
-    handleTransferNack,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_nack_failed', detail)
-  ),
-  'transfer.cancel': (command) => runBridgeHandler(
-    command,
-    'handleTransferCancel',
-    handleTransferCancel,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_cancel_failed', detail)
-  ),
+  'stream.ack': (command) => { getStreamSender().onAck(command); },
+  'stream.nack': (command) => { getStreamSender().onAck(command); },
+  'stream.data': (command) => {
+    const receiver = getStreamReceiver();
+    receiver.onControlMessage(command);
+  },
+  'stream.reset': (command) => {
+    const sender = getStreamSender();
+    sender.reset();
+    if (inboundStreamReceiver) inboundStreamReceiver.reset();
+    handleTransferReset();
+  },
   'transfer.reset': (command) => runBridgeHandler(
     command,
     'handleTransferReset',
     handleTransferReset,
-    async (cmd, detail) => sendTransferError(cmd, 'transfer_reset_failed', detail)
+    async (cmd, detail) => {
+      await postEventViaBridge({
+        type: 'transfer.error',
+        request_id: cmd?.request_id || null,
+        transfer_id: cmd?.transfer_id || null,
+        source: cmd?.source || null,
+        code: 'transfer_reset_failed',
+        detail,
+        ts: Date.now()
+      });
+    }
   )
 };
 

@@ -2,7 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { UartTransport } from '../src/uart.js';
-import { encodeControlFrame, encodeLogFrame } from '../src/binary_frame.js';
+import {
+  encodeControlFrame,
+  encodeLogFrame,
+  encodeTransferChunkFrame,
+} from '../src/binary_frame.js';
+import { kSeqFinalBit } from '../src/stream.js';
 
 function makeTestTransport(commandTimeoutMs = 100) {
   const transport = new UartTransport({
@@ -213,5 +218,185 @@ test('waitForFrame resolves on matching collector frame', async () => {
   const result = await pending;
   assert.equal(result.ok, true);
   assert.equal(result.data.highest, 7);
+  transport.close();
+});
+
+// ---------------------------------------------------------------------------
+// streamRequest tests
+// ---------------------------------------------------------------------------
+
+function makeWriteCapturingTransport(commandTimeoutMs = 200) {
+  const writes = [];
+  const transport = new UartTransport({
+    portPath: 'TEST_PORT',
+    baudRate: 115200,
+    commandTimeoutMs,
+  });
+  transport.open = async function openStub() {
+    this.opened = true;
+    this.serialPort = {
+      write: (line, cb) => {
+        writes.push(Buffer.isBuffer(line) ? line : Buffer.from(String(line)));
+        cb();
+      },
+      drain: (cb) => cb(),
+      isOpen: false,
+      close: (cb) => cb?.(),
+    };
+  };
+  return { transport, writes };
+}
+
+test('streamRequest resolves when inline control message arrives', async () => {
+  const { transport } = makeWriteCapturingTransport(200);
+  const pending = transport.streamRequest(
+    { type: 'tabs.list.request', request_id: 'tl-1' },
+    { timeoutMs: 200 }
+  );
+
+  setTimeout(() => {
+    transport.onData(encodeControlFrame({
+      type: 'tabs.list',
+      request_id: 'tl-1',
+      tabs: [{ id: 1, title: 'Tab One' }],
+    }));
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.equal(result.data.type, 'tabs.list');
+  assert.equal(result.data.tabs.length, 1);
+  transport.close();
+});
+
+test('streamRequest resolves when chunked binary transfer completes', async () => {
+  const { transport, writes } = makeWriteCapturingTransport(300);
+  const pending = transport.streamRequest(
+    { type: 'dom.snapshot.request', request_id: 'ds-1' },
+    { timeoutMs: 300 }
+  );
+
+  // Simulate extension sending a chunked response through firmware.
+  const responseObj = { type: 'dom.snapshot', request_id: 'ds-1', html: '<h1>hi</h1>' };
+  const json = JSON.stringify(responseObj);
+  const bytes = Buffer.from(json, 'utf8');
+  const chunkSize = 20;
+  const totalChunks = Math.ceil(bytes.length / chunkSize);
+  const transferId = 0x12345678;
+
+  setTimeout(() => {
+    for (let i = 0; i < totalChunks; i += 1) {
+      const start = i * chunkSize;
+      const end = Math.min(bytes.length, start + chunkSize);
+      const isFinalChunk = i === totalChunks - 1;
+      const frame = encodeTransferChunkFrame({
+        transferId,
+        seq: isFinalChunk ? ((kSeqFinalBit | i) >>> 0) : i,
+        payload: bytes.subarray(start, end),
+      });
+      transport.onData(frame);
+    }
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, responseObj);
+
+  // StreamReceiver should have sent acks back via writeRawCommand.
+  const ackWrites = writes.filter((w) => {
+    const s = w.toString();
+    return s.includes('"stream.ack"');
+  });
+  assert.ok(ackWrites.length >= 1, 'should have sent ack(s) back');
+  transport.close();
+});
+
+test('streamRequest rejects on timeout when no frames arrive', async () => {
+  const { transport } = makeWriteCapturingTransport(30);
+  await assert.rejects(
+    () => transport.streamRequest(
+      { type: 'dom.snapshot.request', request_id: 'ds-timeout' },
+      { timeoutMs: 30 }
+    ),
+    /device_timeout/
+  );
+  transport.close();
+});
+
+test('streamRequest rejects on stream error (invalid JSON reassembly)', async () => {
+  const { transport } = makeWriteCapturingTransport(200);
+  const pending = transport.streamRequest(
+    { type: 'dom.snapshot.request', request_id: 'ds-bad' },
+    { timeoutMs: 200 }
+  );
+
+  setTimeout(() => {
+    const badPayload = Buffer.from('this is not valid JSON {{{', 'utf8');
+    const frame = encodeTransferChunkFrame({
+      transferId: 0xAABBCCDD,
+      seq: (kSeqFinalBit | 0) >>> 0,
+      payload: badPayload,
+    });
+    transport.onData(frame);
+  }, 10);
+
+  await assert.rejects(pending, /stream_error:json_parse_failed/);
+  transport.close();
+});
+
+test('streamRequest timer resets on each frame (progress keeps it alive)', async () => {
+  const { transport } = makeWriteCapturingTransport(80);
+  const pending = transport.streamRequest(
+    { type: 'dom.snapshot.request', request_id: 'ds-slow' },
+    { timeoutMs: 80 }
+  );
+
+  const responseObj = { type: 'dom.snapshot', request_id: 'ds-slow', data: 'ok' };
+  const bytes = Buffer.from(JSON.stringify(responseObj), 'utf8');
+  const chunkSize = 10;
+  const totalChunks = Math.ceil(bytes.length / chunkSize);
+  const transferId = 0x55667788;
+
+  // Send chunks slowly — each one should reset the timeout.
+  for (let i = 0; i < totalChunks; i += 1) {
+    const start = i * chunkSize;
+    const end = Math.min(bytes.length, start + chunkSize);
+    const isFinal = i === totalChunks - 1;
+    setTimeout(() => {
+      transport.onData(encodeTransferChunkFrame({
+        transferId,
+        seq: isFinal ? ((kSeqFinalBit | i) >>> 0) : i,
+        payload: bytes.subarray(start, end),
+      }));
+    }, 20 + i * 40);
+  }
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data, responseObj);
+  transport.close();
+});
+
+test('streamRequest ignores log frames without error', async () => {
+  const { transport } = makeWriteCapturingTransport(200);
+  const pending = transport.streamRequest(
+    { type: 'tabs.list.request', request_id: 'tl-log' },
+    { timeoutMs: 200 }
+  );
+
+  setTimeout(() => {
+    // Log frame should be ignored, not crash.
+    transport.onData(encodeLogFrame('rx.ble some_log_message'));
+    // Then the real response arrives.
+    transport.onData(encodeControlFrame({
+      type: 'tabs.list',
+      request_id: 'tl-log',
+      tabs: [],
+    }));
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data.tabs, []);
   transport.close();
 });

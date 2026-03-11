@@ -35,18 +35,9 @@ enum class CommandType {
   kScreenshotMeta,
   kScreenshotChunk,
   kScreenshotError,
-  kTransferMeta,
-  kTransferChunk,
-  kTransferDone,
-  kTransferDoneAck,
-  kTransferAck,
-  kTransferNack,
-  kTransferResume,
-  kTransferCancel,
-  kTransferCancelOk,
-  kTransferReset,
-  kTransferResetOk,
-  kTransferError,
+  kStreamAck,
+  kStreamNack,
+  kStreamReset,
 };
 
 struct Command {
