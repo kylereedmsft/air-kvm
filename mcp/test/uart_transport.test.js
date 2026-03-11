@@ -22,7 +22,7 @@ function makeTestTransport(commandTimeoutMs = 100) {
     this.opened = true;
     this.serialPort = {
       write: (data, cb) => {
-        writes.push(Buffer.isBuffer(data) ? data : Buffer.from(String(data)));
+        writes.push(data instanceof Uint8Array ? Buffer.from(data) : Buffer.from(String(data)));
         cb();
       },
       drain: (cb) => cb(),
@@ -129,7 +129,7 @@ test('sendRequest sends via halfpipe and resolves on response', async () => {
   setTimeout(() => {
     const response = { type: 'tabs.list', request_id: 'tl-1', tabs: [{ id: 1 }] };
     // Trigger the halfpipe message callback
-    transport.halfpipe._messageCb(response);
+    transport.halfpipe._messageHandler(response);
   }, 10);
 
   const result = await pending;
@@ -163,7 +163,7 @@ test('sendControlCommand sends AK control frame and resolves', async () => {
 
   // Simulate firmware control response via halfpipe
   setTimeout(() => {
-    transport.halfpipe._controlCb({ ok: true, type: 'state', busy: false });
+    transport.halfpipe._controlHandler({ ok: true, type: 'state', busy: false });
   }, 10);
 
   const result = await pending;

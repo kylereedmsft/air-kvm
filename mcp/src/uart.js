@@ -123,7 +123,7 @@ export class UartTransport {
         fn(val);
       };
 
-      const prevCb = this.halfpipe._messageCb;
+      const prevCb = this.halfpipe._messageHandler;
 
       timer = setTimeout(() => {
         this.log(`sendRequest timeout command=${JSON.stringify(command)}`);
@@ -155,7 +155,7 @@ export class UartTransport {
         fn(val);
       };
 
-      const prevCb = this.halfpipe._controlCb;
+      const prevCb = this.halfpipe._controlHandler;
 
       timer = setTimeout(() => {
         this.log('sendControlCommand timeout');

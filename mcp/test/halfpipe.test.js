@@ -12,11 +12,16 @@ import {
   encodeFrame,
 } from '../src/binary_frame.js';
 
+// Shared code returns Uint8Array; helpers for test convenience.
+const enc = new TextEncoder();
+const dec = new TextDecoder();
+function u8(str) { return enc.encode(str); }
+
 // ── Test helpers ────────────────────────────────────────────────────
 
 function makeWriteCapture() {
   const frames = [];
-  const writeFn = async (buf) => { frames.push(Buffer.from(buf)); };
+  const writeFn = async (buf) => { frames.push(new Uint8Array(buf)); };
   return { frames, writeFn };
 }
 
@@ -29,7 +34,7 @@ function simulateAck(hp, transferId, seq) {
     type: kFrameType.ACK,
     transferId,
     seq,
-    payload: Buffer.alloc(0),
+    payload: new Uint8Array(0),
   });
 }
 
@@ -38,7 +43,7 @@ function simulateNack(hp, transferId, seq) {
     type: kFrameType.NACK,
     transferId,
     seq,
-    payload: Buffer.alloc(0),
+    payload: new Uint8Array(0),
   });
 }
 
@@ -47,7 +52,7 @@ function simulateReset(hp) {
     type: kFrameType.RESET,
     transferId: 0,
     seq: 0,
-    payload: Buffer.alloc(0),
+    payload: new Uint8Array(0),
   });
 }
 
@@ -58,7 +63,7 @@ function makeJsonOfSize(targetLen) {
   if (targetLen < overhead) throw new Error('targetLen too small');
   const pad = 'x'.repeat(targetLen - overhead);
   const json = `{"d":"${pad}"}`;
-  assert.equal(Buffer.byteLength(json, 'utf8'), targetLen);
+  assert.equal(enc.encode(json).length, targetLen);
   return json;
 }
 
@@ -86,7 +91,7 @@ describe('HalfPipe TX', () => {
     assert.ok(f.payload.length < kV2MaxPayload);
 
     // Verify payload is the JSON
-    assert.deepEqual(JSON.parse(f.payload.toString('utf8')), obj);
+    assert.deepEqual(JSON.parse(dec.decode(f.payload)), obj);
 
     simulateAck(hp, f.transferId, f.seq);
     await p;
@@ -206,7 +211,7 @@ describe('HalfPipe TX', () => {
     await new Promise(r => setTimeout(r, 10));
     assert.equal(cap.frames.length, 1);
     const f1 = inspectFrame(cap.frames[0]);
-    order.push(JSON.parse(f1.payload.toString('utf8')).q);
+    order.push(JSON.parse(dec.decode(f1.payload)).q);
 
     simulateAck(hp, f1.transferId, f1.seq);
     await p1;
@@ -215,7 +220,7 @@ describe('HalfPipe TX', () => {
     await new Promise(r => setTimeout(r, 10));
     assert.equal(cap.frames.length, 2);
     const f2 = inspectFrame(cap.frames[1]);
-    order.push(JSON.parse(f2.payload.toString('utf8')).q);
+    order.push(JSON.parse(dec.decode(f2.payload)).q);
 
     simulateAck(hp, f2.transferId, f2.seq);
     await p2;
@@ -236,7 +241,7 @@ describe('HalfPipe RX', () => {
 
   it('9. single chunk receive', async () => {
     const obj = { rx: 'single' };
-    const payload = Buffer.from(JSON.stringify(obj), 'utf8');
+    const payload = u8(JSON.stringify(obj));
 
     let received = null;
     hp.onMessage((msg) => { received = msg; });
@@ -254,7 +259,7 @@ describe('HalfPipe RX', () => {
   it('10. multi-chunk receive', async () => {
     const json = makeJsonOfSize(600);
     const obj = JSON.parse(json);
-    const bytes = Buffer.from(json, 'utf8');
+    const bytes = u8(json);
     const tid = 100;
 
     let received = null;
@@ -288,7 +293,7 @@ describe('HalfPipe RX', () => {
   it('11. zero-length terminator receive', async () => {
     const json = makeJsonOfSize(510); // 2 × 255
     const obj = JSON.parse(json);
-    const bytes = Buffer.from(json, 'utf8');
+    const bytes = u8(json);
     const tid = 200;
 
     let received = null;
@@ -303,12 +308,12 @@ describe('HalfPipe RX', () => {
     assert.equal(received, null); // not yet
 
     // Chunk 2: zero-length terminator
-    hp.onFrame({ type: kFrameType.CHUNK, transferId: tid, seq: 2, payload: Buffer.alloc(0) });
+    hp.onFrame({ type: kFrameType.CHUNK, transferId: tid, seq: 2, payload: new Uint8Array(0) });
     assert.deepEqual(received, obj);
   });
 
   it('12. ACK sent for each received chunk', () => {
-    const payload = Buffer.from('{"a":1}', 'utf8');
+    const payload = u8('{"a":1}');
     hp.onMessage(() => {});
 
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 55, seq: 0, payload });
@@ -329,7 +334,7 @@ describe('HalfPipe RX', () => {
       type: kFrameType.CHUNK,
       transferId: 60,
       seq: 1,
-      payload: Buffer.from('data'),
+      payload: u8('data'),
     });
 
     assert.equal(cap.frames.length, 1);
@@ -345,13 +350,13 @@ describe('HalfPipe RX', () => {
     hp.onMessage((msg) => { received = msg; });
 
     // Start transfer A with a full 255-byte chunk (not final)
-    const padA = Buffer.alloc(kV2MaxPayload, 0x61); // 'a' repeated
+    const padA = new Uint8Array(kV2MaxPayload).fill(0x61); // 'a' repeated
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 300, seq: 0, payload: padA });
     assert.equal(received, null);
 
     // Now start transfer B (different transferId) — replaces A
     const objB = { transfer: 'B' };
-    const payloadB = Buffer.from(JSON.stringify(objB), 'utf8');
+    const payloadB = u8(JSON.stringify(objB));
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 301, seq: 0, payload: payloadB });
 
     assert.deepEqual(received, objB);
@@ -400,7 +405,7 @@ describe('HalfPipe Reset', () => {
     hp.onMessage((msg) => { received = msg; });
 
     // Feed partial chunk (255 bytes, not final)
-    const pad = Buffer.alloc(kV2MaxPayload, 0x61);
+    const pad = new Uint8Array(kV2MaxPayload).fill(0x61);
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 400, seq: 0, payload: pad });
     assert.equal(received, null);
 
@@ -413,7 +418,7 @@ describe('HalfPipe Reset', () => {
       type: kFrameType.CHUNK,
       transferId: 401,
       seq: 0,
-      payload: Buffer.from(JSON.stringify(obj), 'utf8'),
+      payload: u8(JSON.stringify(obj)),
     });
     assert.deepEqual(received, obj);
   });
@@ -427,7 +432,7 @@ describe('HalfPipe Reset', () => {
     await new Promise(r => setTimeout(r, 10));
 
     // Feed partial RX
-    const pad = Buffer.alloc(kV2MaxPayload, 0x61);
+    const pad = new Uint8Array(kV2MaxPayload).fill(0x61);
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 500, seq: 0, payload: pad });
 
     // Incoming reset
@@ -442,7 +447,7 @@ describe('HalfPipe Reset', () => {
       type: kFrameType.CHUNK,
       transferId: 501,
       seq: 0,
-      payload: Buffer.from(JSON.stringify(obj), 'utf8'),
+      payload: u8(JSON.stringify(obj)),
     });
     assert.deepEqual(received, obj);
   });
@@ -467,7 +472,7 @@ describe('HalfPipe Control/Log', () => {
       type: kFrameType.CONTROL,
       transferId: 0,
       seq: 0,
-      payload: Buffer.from(JSON.stringify(ctrlObj), 'utf8'),
+      payload: u8(JSON.stringify(ctrlObj)),
     });
 
     assert.deepEqual(received, ctrlObj);
@@ -482,7 +487,7 @@ describe('HalfPipe Control/Log', () => {
       type: kFrameType.LOG,
       transferId: 0,
       seq: 0,
-      payload: Buffer.from(text, 'utf8'),
+      payload: u8(text),
     });
 
     assert.equal(received, text);
@@ -507,7 +512,7 @@ describe('HalfPipe Edge Cases', () => {
     const f = inspectFrame(cap.frames[0]);
     assert.ok(f.ok);
     assert.equal(f.type, kFrameType.CHUNK);
-    assert.equal(f.payload.toString('utf8'), '{}');
+    assert.equal(dec.decode(f.payload), '{}');
     assert.equal(f.payload.length, 2);
 
     simulateAck(hp, f.transferId, f.seq);
@@ -520,7 +525,7 @@ describe('HalfPipe Edge Cases', () => {
       type: kFrameType.CHUNK,
       transferId: 999,
       seq: 0,
-      payload: Buffer.from('{}', 'utf8'),
+      payload: u8('{}'),
     });
     assert.deepEqual(received, {});
   });
