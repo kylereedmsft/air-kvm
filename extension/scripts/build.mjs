@@ -27,8 +27,8 @@ for (const file of readdirSync(srcDir)) {
 copyFileSync(join(sharedDir, 'binary_frame.js'), join(distDir, 'binary_frame.js'));
 copyFileSync(join(sharedDir, 'halfpipe.js'),     join(distDir, 'halfpipe.js'));
 
-// Write manifest.json with "src/" prefix stripped from all script paths
+// Write manifest.json verbatim — paths are already relative to dist/ root
 const manifest = readFileSync(join(extensionDir, 'manifest.json'), 'utf8');
-writeFileSync(join(distDir, 'manifest.json'), manifest.replaceAll('src/', ''));
+writeFileSync(join(distDir, 'manifest.json'), manifest);
 
 console.log(`Extension built → ${distDir}`);
