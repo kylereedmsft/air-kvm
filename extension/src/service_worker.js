@@ -1,7 +1,7 @@
 import { resolveScreenshotConfig } from './screenshot_protocol.js';
 import { HalfPipe } from './halfpipe.js';
 import { tryExtractV2Frame, kV2MinFrameLen } from './binary_frame.js';
-const kBleBridgePagePath = 'src/ble_bridge.html';
+const kBleBridgePagePath = 'ble_bridge.html';
 const kDebugDefault = false;
 const kDebugStorageKey = 'airkvmVerboseBridgeLog';
 const kScreenshotCaptureTimeoutMs = 25000;
