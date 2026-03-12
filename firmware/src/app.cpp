@@ -26,19 +26,6 @@ constexpr const char* kTxCharUuid = "6E400103-B5A3-F393-E0A9-E50E24DCCB01";
 constexpr const char* kBootMsg =
     "{\"type\":\"boot\",\"fw\":\"air-kvm-ctrl-cb01\",\"version\":\"" AIRKVM_FW_VERSION
     "\",\"built_at\":\"" AIRKVM_FW_BUILT_AT "\"}";
-constexpr uint8_t kTransferMagic0 = 0x41;  // 'A'
-constexpr uint8_t kTransferMagic1 = 0x4b;  // 'K'
-constexpr size_t kTransferMinFrameLen = 18;
-
-bool IsBinaryTransferFrame(const std::string& value) {
-  if (value.size() < kTransferMinFrameLen) return false;
-  const auto* bytes = reinterpret_cast<const uint8_t*>(value.data());
-  if (bytes[0] != kTransferMagic0 || bytes[1] != kTransferMagic1) return false;
-  const uint16_t payload_len = static_cast<uint16_t>(bytes[12]) |
-                               (static_cast<uint16_t>(bytes[13]) << 8);
-  const size_t expected_len = kTransferMinFrameLen + payload_len;
-  return value.size() == expected_len;
-}
 
 String JsonBool(bool value) {
   return value ? "true" : "false";
@@ -69,9 +56,8 @@ void AirKvmApp::Setup() {
 
   NimBLEDevice::init(kDeviceName);
   if (AIRKVM_ENABLE_HID && AIRKVM_HID_SECURITY_MODE != 0) {
-    // Make HID pairing/bonding explicit for host OSes that require secure HID workflows.
     NimBLEDevice::setSecurityAuth(true, false, true);
-    NimBLEDevice::setSecurityIOCap(0x03);  // BLE_HS_IO_NO_INPUT_OUTPUT
+    NimBLEDevice::setSecurityIOCap(0x03);
   }
   NimBLEServer* server = NimBLEDevice::createServer();
   server->setCallbacks(&server_callbacks_);
@@ -92,7 +78,6 @@ void AirKvmApp::Setup() {
   adv_services += "]";
 
   NimBLEService* service = server->createService(kServiceUuid);
-
   NimBLECharacteristic* rx_char = service->createCharacteristic(
       kRxCharUuid, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
   rx_char->setCallbacks(&rx_callbacks_);
@@ -121,30 +106,65 @@ void AirKvmApp::Loop() {
 #if defined(ESP32)
   DrainBleRxQueue();
 #endif
-  const String line = uart_reader_.PollLine();
-  if (line.length() == 0) {
-    delay(5);
+  if (!DrainUartBytes()) {
+    delay(1);
+  }
+}
+
+bool AirKvmApp::DrainUartBytes() {
+  if (Serial.available() <= 0) return false;
+  uint8_t buf[64];
+  while (Serial.available() > 0) {
+    const size_t to_read = static_cast<size_t>(
+        min(static_cast<int>(sizeof(buf)), Serial.available()));
+    const size_t n = static_cast<size_t>(
+        Serial.readBytes(reinterpret_cast<char*>(buf), to_read));
+    if (n == 0) break;
+    uart_parser_.Feed(buf, n, [this](const AkFrame& frame) { OnUartFrame(frame); });
+  }
+  return true;
+}
+
+void AirKvmApp::OnUartFrame(const AkFrame& frame) {
+  if (frame.type == kAkFrameTypeControl) {
+    router_.ProcessControlFrame(frame);
     return;
   }
-  router_.ProcessLine(line, "uart");
+  if (frame.type == kAkFrameTypeReset) {
+    uart_parser_.Reset();
+    transport_.ForwardFrameToBle(frame);
+    return;
+  }
+  // CHUNK, ACK, NACK, LOG → forward to extension.
+  transport_.ForwardFrameToBle(frame);
+}
+
+void AirKvmApp::OnBleFrame(const AkFrame& frame) {
+  if (frame.type == kAkFrameTypeReset) {
+    ble_parser_.Reset();
+    transport_.ForwardFrameToUart(frame, /*priority=*/true);
+    return;
+  }
+  // CHUNK, ACK, NACK → forward to MCP.
+  // CONTROL and LOG from the extension are not expected; drop silently.
+  if (frame.type == kAkFrameTypeChunk ||
+      frame.type == kAkFrameTypeAck   ||
+      frame.type == kAkFrameTypeNack) {
+    transport_.ForwardFrameToUart(frame);
+  }
 }
 
 void AirKvmApp::OnBleWrite(const std::string& value) {
   if (value.empty()) return;
 #if defined(ESP32)
   if (ble_rx_queue_ != nullptr) {
+    if (value.size() > kMaxBleWriteLen) return;
     BleRxItem item{};
-    if (value.size() > kMaxBleWriteLen) {
-      return;
-    }
     item.len = value.size();
     std::memcpy(item.data, value.data(), item.len);
-    // Keep BLE->UART serialization on the queue path to avoid interleaving writes
-    // from callback context with the main loop UART writer.
-    if (xQueueSend(ble_rx_queue_, &item, pdMS_TO_TICKS(20)) == pdTRUE) {
-      return;
+    if (xQueueSend(ble_rx_queue_, &item, pdMS_TO_TICKS(20)) != pdTRUE) {
+      transport_.EmitLog("{\"evt\":\"ble.rx_queue_overflow\",\"action\":\"drop\"}");
     }
-    transport_.EmitLog("{\"evt\":\"ble.rx_queue_overflow\",\"action\":\"drop\"}");
     return;
   }
 #endif
@@ -153,48 +173,10 @@ void AirKvmApp::OnBleWrite(const std::string& value) {
 
 void AirKvmApp::ProcessBleWrite(const std::string& value) {
   if (value.empty()) return;
-  if (IsBinaryTransferFrame(value)) {
-    transport_.EmitBinaryFrame(
-        reinterpret_cast<const uint8_t*>(value.data()),
-        value.size());
-    // Generate stream.ack back to BLE sender.
-    // Extract transfer_id (bytes 4-7 LE) and seq (bytes 8-11 LE) from the AK frame.
-    if (value.size() >= kTransferMinFrameLen) {
-      const auto* b = reinterpret_cast<const uint8_t*>(value.data());
-      const uint32_t tid = static_cast<uint32_t>(b[4]) |
-                           (static_cast<uint32_t>(b[5]) << 8) |
-                           (static_cast<uint32_t>(b[6]) << 16) |
-                           (static_cast<uint32_t>(b[7]) << 24);
-      const uint32_t raw_seq = static_cast<uint32_t>(b[8]) |
-                               (static_cast<uint32_t>(b[9]) << 8) |
-                               (static_cast<uint32_t>(b[10]) << 16) |
-                               (static_cast<uint32_t>(b[11]) << 24);
-      const uint32_t seq = raw_seq & 0x7FFFFFFFu;
-      char ack[128];
-      snprintf(ack, sizeof(ack),
-               "{\"type\":\"stream.ack\",\"transfer_id\":\"tx_%08x\",\"seq\":%u}",
-               tid, seq);
-      transport_.ForwardControlToBle(ack);
-    }
-    return;
-  }
-
-  for (char c : value) {
-    if (c == '\n') {
-      router_.ProcessLine(ble_buffer_, "ble");
-      ble_buffer_ = "";
-      continue;
-    }
-    if (c != '\r') {
-      ble_buffer_ += c;
-      if (ble_buffer_.length() > kMaxBleControlBufferLen) {
-        transport_.EmitLog("{\"evt\":\"ble.ctrl.drop\",\"reason\":\"buffer_overflow\"}");
-        ble_buffer_ = "";
-      }
-    }
-  }
-  // Keep buffering partial BLE control payloads until a newline-delimited
-  // command arrives. This prevents fragmentary JSON from being parsed early.
+  ble_parser_.Feed(
+      reinterpret_cast<const uint8_t*>(value.data()),
+      value.size(),
+      [this](const AkFrame& frame) { OnBleFrame(frame); });
 }
 
 #if defined(ESP32)
@@ -225,30 +207,28 @@ void AirKvmApp::ServerCallbacks::onDisconnect(NimBLEServer* server) {
 }
 
 void AirKvmApp::OnBleConnected(NimBLEServer* server) {
-  active_conn_count_ = server != nullptr ? static_cast<uint32_t>(server->getConnectedCount()) : active_conn_count_ + 1;
-  bool adv_restart_ok = false;
-  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  if (advertising != nullptr) {
-    adv_restart_ok = advertising->start();
-  }
+  active_conn_count_ = server != nullptr
+      ? static_cast<uint32_t>(server->getConnectedCount())
+      : active_conn_count_ + 1;
+  bool adv_ok = false;
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr) adv_ok = adv->start();
   transport_.EmitLog(
-      String("{\"evt\":\"ble.conn\",\"conn_id\":null,\"peer\":null,\"active_conn_count\":") +
-      String(active_conn_count_) +
-      ",\"adv_restart\":" + JsonBool(adv_restart_ok) +
+      String("{\"evt\":\"ble.conn\",\"active_conn_count\":") + String(active_conn_count_) +
+      ",\"adv_restart\":" + JsonBool(adv_ok) +
       ",\"hid_enabled\":" + JsonBool(hid_enabled_) + "}");
 }
 
 void AirKvmApp::OnBleDisconnected(NimBLEServer* server) {
-  active_conn_count_ = server != nullptr ? static_cast<uint32_t>(server->getConnectedCount()) : 0;
-  bool adv_restart_ok = false;
-  NimBLEAdvertising* advertising = NimBLEDevice::getAdvertising();
-  if (advertising != nullptr) {
-    adv_restart_ok = advertising->start();
-  }
+  active_conn_count_ = server != nullptr
+      ? static_cast<uint32_t>(server->getConnectedCount())
+      : 0;
+  bool adv_ok = false;
+  NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
+  if (adv != nullptr) adv_ok = adv->start();
   transport_.EmitLog(
-      String("{\"evt\":\"ble.disc\",\"conn_id\":null,\"peer\":null,\"disc_reason\":null,\"active_conn_count\":") +
-      String(active_conn_count_) +
-      ",\"adv_restart\":" + JsonBool(adv_restart_ok) +
+      String("{\"evt\":\"ble.disc\",\"active_conn_count\":") + String(active_conn_count_) +
+      ",\"adv_restart\":" + JsonBool(adv_ok) +
       ",\"hid_enabled\":" + JsonBool(hid_enabled_) + "}");
 }
 

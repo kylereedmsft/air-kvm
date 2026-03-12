@@ -6,6 +6,8 @@
 
 namespace airkvm {
 
+// Firmware-local commands only. Browser tool traffic is bridged as opaque AK frames
+// and never reaches the command router.
 enum class CommandType {
   kUnknown,
   kMouseMoveRel,
@@ -16,28 +18,6 @@ enum class CommandType {
   kStateRequest,
   kStateSet,
   kFwVersionRequest,
-  kDomSnapshotRequest,
-  kTabsListRequest,
-  kWindowBoundsRequest,
-  kTabOpenRequest,
-  kJsExecRequest,
-  kScreenshotRequest,
-  kDomSnapshot,
-  kTabsList,
-  kWindowBounds,
-  kTabOpen,
-  kTabOpenError,
-  kJsExecResult,
-  kJsExecError,
-  kTabsListError,
-  kDomSnapshotError,
-  kWindowBoundsError,
-  kScreenshotMeta,
-  kScreenshotChunk,
-  kScreenshotError,
-  kStreamAck,
-  kStreamNack,
-  kStreamReset,
 };
 
 struct Command {
