@@ -10,7 +10,7 @@ import {
 
 const kTrustedSender = {
   id: 'test',
-  url: 'chrome-extension://test/src/ble_bridge.html'
+  url: 'chrome-extension://test/ble_bridge.html'
 };
 
 function makeHarness() {
