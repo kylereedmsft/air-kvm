@@ -17,7 +17,7 @@ Maintain a reliable remote-control and browser-automation stack where:
 - Single deterministic UART TX writer path is enforced on ESP32 (queue + TX task).
 - BLE RX queue remains the required BLE->UART serialization path.
 - Stream ack generation: after forwarding binary chunk to UART, firmware sends ack (`0x04`) frame back on BLE.
-- HID enabled by default (`AIRKVM_ENABLE_HID=1`) with security mode 1.
+- HID always enabled (`AIRKVM_ENABLE_HID=1`) with security mode 1.
 - `key.type` supports escape sequences: `\n`, `\t`, `\\`, `{Enter}`, `{Tab}`, `{Escape}`, `{Backspace}`, `{Delete}`, `{Up/Down/Left/Right}`.
 - All legacy `transfer.*` command types removed from protocol/parser/router.
 
@@ -182,7 +182,7 @@ Extension-side HalfPipe implemented — same `send(obj)`/`onMessage(cb)` API:
 frame forwarding both directions, BLE size guard rejection, reset priority
 (mid-transfer, full queue, BLE disconnected).
 
-### Phase 11 — Cleanup + E2E ⬜
+### Phase 11 — Cleanup + E2E ✅
 
 - Update `docs/architecture.md` for any remaining stale references
 - `cd mcp && node --test && cd ../extension && node --test` — all pass
@@ -192,7 +192,7 @@ frame forwarding both directions, BLE size guard rejection, reset priority
 
 ## Other Completed Work
 
-- **HID enabled by default** — `AIRKVM_ENABLE_HID=1` in firmware with security mode 1.
+- **HID always enabled** — unconditional in firmware; `AIRKVM_ENABLE_HID` and `AIRKVM_HID_SECURITY_MODE` flags removed.
 - **key.type escape handling** — firmware HID controller parses `\n`, `\t`, `\\`, and `{Name}` sequences.
 - **Protocol observability** — stream-specific UART debug logging for all stream operations.
 

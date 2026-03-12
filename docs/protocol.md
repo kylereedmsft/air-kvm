@@ -253,9 +253,6 @@ HID commands are handled locally by the firmware.
 
 ## 8) HID Support
 
-BLE HID (HOGP) is enabled by default (`AIRKVM_ENABLE_HID=1`). The firmware
-advertises both the UART control service and HID service simultaneously.
-
-Security mode defaults to 1 (BLE security with authentication). The
-`esp32dev_hid_uart_compat` build environment disables security (mode 0) for
-devices that don't support pairing.
+BLE HID (HOGP) is always enabled. The firmware advertises both the UART control
+service and HID service simultaneously. BLE security (authenticated pairing) is
+always on.

@@ -49,7 +49,7 @@
 
 ## Known Risks / Gaps
 - Service-worker tests are now present for `js.exec` and `tab.open`, but transfer-lifecycle fault coverage is still incomplete.
-- HID path exists in firmware code but is not the primary validated runtime path (`AIRKVM_ENABLE_HID=0` in default app build).
+- HID path is always active in firmware; BLE security (authenticated pairing) is always on.
 - Deterministic HID click targeting depends on host cursor travel reliability and browser-window coordinate mapping.
 
 ## Recent Live Validation

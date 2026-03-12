@@ -25,11 +25,11 @@
 ### 1. Firmware (`firmware/`, ESP32)
 
 - Owns BLE GATT UART service (`6E400101-...`).
-- Routes command lines between BLE and UART (dumb pipe / bridge).
+- Routes AK binary frames bidirectionally between BLE and UART (dumb pipe / bridge).
 - Emits UART framed packets (`AK` framing): chunk (`0x01`), control (`0x02`), log (`0x03`).
 - Generates ack (`0x04`) frames back to extension after forwarding binary chunks to UART.
 - Never buffers more than one chunk — firmware backpressure is flow control.
-- BLE HID (HOGP) enabled by default (`AIRKVM_ENABLE_HID=1`), coexists with UART service.
+- BLE HID (HOGP) always enabled, coexists with UART service. BLE security (authenticated pairing) always on.
 
 ### 2. MCP Server (`mcp/`)
 

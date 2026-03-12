@@ -28,52 +28,24 @@ This runs:
 
 ## Firmware Build Variants (HID Off / HID On)
 
-Default variant (HID off, unchanged current path):
+Build and flash:
 
 ```bash
 cd firmware
 pio run -e esp32dev
 ```
 
-HID+UART coexistence variant (HID enabled, secure pairing mode):
-
-```bash
-cd firmware
-pio run -e esp32dev_hid_uart
-```
-
-HID+UART compatibility variant (HID enabled, compatibility-first security mode):
-
-```bash
-cd firmware
-pio run -e esp32dev_hid_uart_compat
-```
-
-Flash default HID-off variant:
+Flash to device:
 
 ```bash
 cd firmware
 pio run -e esp32dev -t upload
 ```
 
-Flash HID+UART variant:
-
-```bash
-cd firmware
-pio run -e esp32dev_hid_uart -t upload
-```
-
-Flash HID+UART compatibility variant:
-
-```bash
-cd firmware
-pio run -e esp32dev_hid_uart_compat -t upload
-```
-
 Rollback guidance:
-1. Reflash with default HID-off: `cd firmware && pio run -e esp32dev -t upload`.
+1. Reflash: `cd firmware && pio run -e esp32dev -t upload`.
 2. Power-cycle/reset device and reconnect BLE.
-3. If host pairing behavior changed during HID testing, clear the host BLE pairing cache and pair again.
+3. If host pairing behavior changed, clear the host BLE pairing cache and pair again.
 
 ## Manual Commands
 
@@ -123,8 +95,7 @@ Tool harness:
 - `AIRKVM_SAVE_SCREENSHOTS=1` (optional screenshot file save to `temp/`)
 
 Firmware build/runtime:
-- `AIRKVM_ENABLE_HID` compile-time switch (default `0` in current app config)
-- `AIRKVM_HID_SECURITY_MODE` compile-time switch (`1` secure pairing mode, `0` compatibility mode)
+- No compile-time feature flags — HID and BLE security are unconditionally enabled.
 
 ## BLE Manual Reference
 
