@@ -4,15 +4,10 @@ Use this checklist to close out HID/browser coexistence validation on a flashed 
 
 ## Preconditions
 
-1. Firmware flashed with HID+UART build:
+1. Firmware flashed:
 ```bash
 cd firmware
-pio run -e esp32dev_hid_uart -t upload
-```
-   - Alternate fallback build:
-```bash
-cd firmware
-pio run -e esp32dev_hid_uart_compat -t upload
+pio run -e esp32dev -t upload
 ```
 2. Extension loaded/reloaded on target machine.
 3. Target OS has paired/bonded HID device at least once.
@@ -69,7 +64,7 @@ Treat any of the following as a blocker:
 
 Record:
 
-1. Date/time and firmware environment (`esp32dev_hid_uart` or compat build).
+1. Date/time and firmware build.
 2. Command lines used.
 3. Pass/fail totals for each lane.
 4. First failure log snippet (if any) with timestamp.

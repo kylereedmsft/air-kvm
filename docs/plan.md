@@ -17,7 +17,6 @@ Maintain a reliable remote-control and browser-automation stack where:
 - Single deterministic UART TX writer path is enforced on ESP32 (queue + TX task).
 - BLE RX queue remains the required BLE->UART serialization path.
 - Stream ack generation: after forwarding binary chunk to UART, firmware sends ack (`0x04`) frame back on BLE.
-- HID always enabled (`AIRKVM_ENABLE_HID=1`) with security mode 1.
 - `key.type` supports escape sequences: `\n`, `\t`, `\\`, `{Enter}`, `{Tab}`, `{Escape}`, `{Backspace}`, `{Delete}`, `{Up/Down/Left/Right}`.
 - All legacy `transfer.*` command types removed from protocol/parser/router.
 

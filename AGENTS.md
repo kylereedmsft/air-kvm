@@ -15,7 +15,6 @@ Deployment topology:
 
 ## Current Reality (March 8, 2026)
 - Firmware currently exposes a custom BLE UART-style service (`6E400101-...`) as the active data path.
-- Firmware HID code exists, but the default app build uses `AIRKVM_ENABLE_HID=0`, so BLE HID is not the primary validated path.
 - MCP supports high-level tools for tabs, DOM snapshot, tab screenshot, and desktop screenshot over UART/BLE relay.
 - Extension BLE bridge + service worker path is active for DOM/screenshot workflows.
 - Source of truth for implementation status and next steps: `docs/plan.md`.
