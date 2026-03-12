@@ -164,7 +164,7 @@ Extension-side HalfPipe implemented — same `send(obj)`/`onMessage(cb)` API:
 
 **Files**: `extension/src/service_worker.js`
 
-### Phase 10 — Firmware: AK v2 bridge ⬜ (NEXT)
+### Phase 10 — Firmware: AK v2 bridge ✅
 
 - UART reader: detect AK magic (`0x41 0x4B`) on serial input, switch to binary
   frame parsing (read by header length). Fall back to text line for non-AK input.
