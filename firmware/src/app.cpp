@@ -79,12 +79,12 @@ void AirKvmApp::Setup() {
   advertising->addServiceUUID(kServiceUuid);
   advertising->setScanResponse(true);
   transport_.EmitLog(
-      String(R"({"evt":"ble.adv.payload","device_name":")" + kDeviceName +
+      String(R"({"evt":"ble.adv.payload","device_name":")") + kDeviceName +
       R"(","adv_services":)" + adv_services +
       R"(,"scan_rsp_services":[]})");
   advertising->start();
   transport_.EmitLog(
-      String(R"({"evt":"ble.adv.start","device_name":")" + kDeviceName + R"("})");
+      String(R"({"evt":"ble.adv.start","device_name":")") + kDeviceName + R"("})");
 
   transport_.EmitControl(kBootMsg);
 }
