@@ -56,26 +56,45 @@ Runtime env vars:
 
 These are hard constraints. Violating them introduces subtle bugs that are difficult to trace.
 
+### The One Rule
+
+**ALL messages to firmware — from either the extension or MCP — MUST go through HalfPipe.**
+
+No exceptions. No raw JSON. No direct BLE writes. No CONTROL frames from extension.
+
+### How HalfPipe works
+
+- Caller: `halfpipe.send(obj)` / `halfpipe.onMessage(cb)` / `halfpipe.onControl(cb)`
+- HalfPipe serializes `obj` to JSON, splits into ≤255-byte chunks, wraps each as an AK CHUNK frame (`0x01`), sends one at a time, waits for ACK before next chunk.
+- Firmware is a **dumb bridge**: forwards CHUNK/ACK/NACK/RESET between UART↔BLE unchanged. It never parses CHUNK payloads.
+- MCP HalfPipe: `writeFn` → `encodeChunkFrame` → UART write.
+- Extension HalfPipe (service_worker.js `getHalfPipe()`): `writeFn` → `postBinaryOrThrow` → `postBinaryViaBridge` → `ble.postBinary` → bridge page → `postBinary` → BLE write.
+
 ### Extension → Firmware (BLE)
-- **ALL messages from extension to firmware MUST go through HalfPipe (`getHalfPipe().send(msg)`).**
-- HalfPipe encodes messages as AK CHUNK frames (type `0x01`) and sends them via `postBinaryViaBridge` → `ble.postBinary` → `postBinary` → BLE write.
-- **Never write raw JSON to BLE.** Never use `postEvent` / `ble.post` to send commands to firmware. Firmware's BLE RX parser expects AK frames and silently drops anything else.
-- **Never send CONTROL frames (type `0x02`) from extension to firmware.** Firmware's `OnBleFrame` explicitly drops CONTROL frames received from BLE.
+
+- **Use `getHalfPipe().send(msg)` in service_worker.js.** That is the only correct send path.
+- `ble_bridge.js` cannot call HalfPipe directly (different context). It must send `{ type: 'halfpipe.send', payload }` to the service worker, which calls `getHalfPipe().send(payload)`.
+- **Never call `postEvent` / `ble.post` to send anything to firmware.** `postEvent` writes raw JSON text to BLE. Firmware's BLE RX parser expects AK frames and silently drops raw JSON.
+- **Never send CONTROL frames from extension to firmware.** `OnBleFrame()` in firmware explicitly drops CONTROL frames received over BLE.
 
 ### Firmware → Extension (BLE)
-- Firmware sends CONTROL frames (`0x02`) for boot message and state responses.
-- Extension receives them via BLE TX notify → `handleBleRawBytes` → `hp.onFrame()` → `halfpipe.onControl(cb)`.
+
+- Firmware sends CONTROL frames (`0x02`) for boot message and state responses via BLE TX notify.
+- Extension path: BLE notify → `ble_bridge.js` → `ble.command { type: '__ble_raw_bytes' }` → service worker `handleBleRawBytes` → `hp.onFrame()` → `halfpipe.onControl(cb)` or `halfpipe.onMessage(cb)`.
+- Service worker forwards CONTROL frames from firmware back to `ble_bridge.js` via `chrome.runtime.sendMessage({ type: 'ble.control', command: msg })` so the bridge page can handle handshake/health resolution.
 
 ### MCP → Firmware (UART)
-- **HID / firmware-local commands** (`airkvm_send`): encoded as CONTROL frames (`0x02`) via `sendControlCommand`. Handled locally by firmware.
-- **All other commands** (browser tools): sent via HalfPipe as CHUNK frames (`0x01`) via `sendRequest`. Firmware forwards them to BLE.
 
-### Firmware is a dumb bridge
-- Firmware does not parse CHUNK frame payloads. It forwards CHUNK/ACK/NACK/RESET between UART and BLE unchanged.
-- The only commands firmware handles locally are those sent as CONTROL frames on UART from MCP.
+- **HID / firmware-local commands** (`airkvm_send` tool): encoded as CONTROL frames (`0x02`) via `sendControlCommand`. This is the **only** place CONTROL frames are sent — from MCP to firmware over UART only.
+- **All other tools** (browser automation): sent via `halfpipe.send()` as CHUNK frames. Firmware forwards them to BLE. Extension HalfPipe reassembles.
+
+### What the firmware handles locally (CONTROL frames on UART only)
+
+`mouse.move_rel`, `mouse.move_abs`, `mouse.click`, `key.tap`, `key.type`, `state.request`, `state.set`, `fw.version.request`. Everything else is forwarded to BLE as-is.
 
 ### Full reference
-See `docs/protocol.md` for the complete wire protocol specification.
+
+See `docs/protocol.md` §5 for the complete half-pipe transport specification.
 
 ## Coding Style & Naming Conventions
 - JavaScript: ESM modules, 2-space indentation, semicolons, single quotes.
