@@ -620,6 +620,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         debugLog('ble.postBinary error', { traceId: msg.traceId || null, error });
         sendResponse({ ok: false, error });
       });
+    return true;
+  }
+});
 
 async function captureDesktopDataUrl(options = {}) {
   const delayMs = Number.isInteger(options.desktopDelayMs)
