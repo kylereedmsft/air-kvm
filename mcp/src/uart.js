@@ -70,6 +70,9 @@ export class UartTransport {
     if (command?.type === 'state.request' && msg.type === 'state' && typeof msg.busy === 'boolean') {
       return true;
     }
+    if (command?.type === 'fw.version.request' && msg.type === 'fw.version' && typeof msg.version === 'string') {
+      return true;
+    }
     return false;
   }
 
