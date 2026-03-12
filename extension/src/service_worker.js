@@ -1,6 +1,6 @@
 import { resolveScreenshotConfig } from './screenshot_protocol.js';
 import { HalfPipe } from './halfpipe.js';
-import { tryExtractV2Frame, kV2MinFrameLen } from './binary_frame.js';
+import { tryExtractV2Frame, kV2MinFrameLen, kMagic0 } from './binary_frame.js';
 const kBleBridgePagePath = 'ble_bridge.html';
 const kDebugDefault = false;
 const kDebugStorageKey = 'airkvmVerboseBridgeLog';
@@ -668,7 +668,16 @@ function handleBleRawBytes(bytesArray) {
   const hp = getHalfPipe();
   while (bleBinaryBuffer.length >= kV2MinFrameLen) {
     const result = tryExtractV2Frame(bleBinaryBuffer);
-    if (!result) break;
+    if (!result) {
+      // Scan forward to next AK magic byte rather than stalling on garbage
+      let next = -1;
+      for (let i = 1; i < bleBinaryBuffer.length; i++) {
+        if (bleBinaryBuffer[i] === kMagic0) { next = i; break; }
+      }
+      if (next === -1) { bleBinaryBuffer = new Uint8Array(0); break; }
+      bleBinaryBuffer = bleBinaryBuffer.slice(next);
+      continue;
+    }
     bleBinaryBuffer = bleBinaryBuffer.slice(result.consumed);
     if (result.frame.type !== 'error') {
       hp.onFrame(result.frame);

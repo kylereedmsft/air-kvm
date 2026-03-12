@@ -72,7 +72,6 @@ void AirKvmApp::Setup() {
   rx_char->setCallbacks(&rx_callbacks_);
   NimBLECharacteristic* tx_char = service->createCharacteristic(
       kTxCharUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
-  tx_char->setValue(reinterpret_cast<const uint8_t*>(kBootMsg), std::strlen(kBootMsg));
   transport_.SetBleTxCharacteristic(tx_char);
 
   service->start();
