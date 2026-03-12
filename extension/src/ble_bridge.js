@@ -596,8 +596,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     const command = msg.command;
     commandLog('BLE->SW (ctrl)', command);
     noteControlFrameForHealth(command);
-    if (state.pendingHandshake && (command?.type === 'state' || command?.type === 'boot' || typeof command?.ok === 'boolean')) {
-      state.pendingHandshake();
+    if (connectState.pendingHandshake && (command?.type === 'state' || command?.type === 'boot' || typeof command?.ok === 'boolean')) {
+      connectState.pendingHandshake();
     }
     sendResponse({ ok: true });
     return true;
