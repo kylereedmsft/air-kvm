@@ -51,6 +51,23 @@ void TransportMux::EmitControl(const char* payload) {
   EnqueueFrame(frame);
 }
 
+void TransportMux::EmitControlToBle(const char* payload) {
+  if (payload == nullptr || tx_char_ == nullptr) return;
+  const size_t text_len = std::strlen(payload);
+  if (text_len == 0 || text_len > kAkMaxPayload) return;
+  TxFrame frame{};
+  if (!AkEncodeFrame(
+          kAkFrameTypeControl, 0, 0,
+          reinterpret_cast<const uint8_t*>(payload),
+          static_cast<uint8_t>(text_len),
+          frame.binary, sizeof(frame.binary), &frame.binary_len)) {
+    return;
+  }
+  if (frame.binary_len > kMaxBleNotifyBytes) return;
+  tx_char_->setValue(frame.binary, frame.binary_len);
+  tx_char_->notify();
+}
+
 void TransportMux::EmitLog(const String& message) {
   if (message.length() == 0) return;
   const auto text_len = static_cast<uint8_t>(

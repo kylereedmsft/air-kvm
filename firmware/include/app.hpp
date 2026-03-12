@@ -32,6 +32,16 @@ class AirKvmApp {
   };
 #endif
 
+  class TxCallbacks : public NimBLECharacteristicCallbacks {
+   public:
+    explicit TxCallbacks(AirKvmApp& app);
+    void onSubscribe(NimBLECharacteristic* characteristic,
+                     ble_gap_conn_desc* desc,
+                     uint16_t sub_value) override;
+   private:
+    AirKvmApp& app_;
+  };
+
   class RxCallbacks : public NimBLECharacteristicCallbacks {
    public:
     explicit RxCallbacks(AirKvmApp& app);
@@ -53,6 +63,7 @@ class AirKvmApp {
 
   void OnBleWrite(const std::string& value);
   void ProcessBleWrite(const std::string& value);
+  void OnBleSubscribed();
   void OnUartFrame(const AkFrame& frame);
   void OnBleFrame(const AkFrame& frame);
   void OnBleConnected(NimBLEServer* server);
@@ -69,6 +80,7 @@ class AirKvmApp {
   CommandRouter   router_;
   AkFrameParser   uart_parser_;
   AkFrameParser   ble_parser_;
+  TxCallbacks     tx_callbacks_;
   RxCallbacks     rx_callbacks_;
   ServerCallbacks server_callbacks_;
   uint32_t        active_conn_count_{0};

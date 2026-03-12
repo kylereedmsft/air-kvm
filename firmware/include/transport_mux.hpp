@@ -24,7 +24,9 @@ class TransportMux {
   // Emit a state CONTROL frame to UART.
   void EmitState(const DeviceState& state);
 
-  // Forward an AK frame to BLE. Returns false if the frame is too large
+  // Emit a firmware-generated CONTROL frame directly to BLE (bypasses UART queue).
+  // Safe to call from the NimBLE subscription callback after the client subscribes.
+  void EmitControlToBle(const char* payload);
   // to notify; the caller is responsible for sending a NACK.
   bool ForwardFrameToBle(const AkFrame& frame);
 

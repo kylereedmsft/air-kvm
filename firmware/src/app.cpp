@@ -34,7 +34,7 @@ AirKvmApp& AirKvmApp::Instance() {
 }
 
 AirKvmApp::AirKvmApp()
-    : router_(transport_, state_, hid_), rx_callbacks_(*this), server_callbacks_(*this) {
+    : router_(transport_, state_, hid_), tx_callbacks_(*this), rx_callbacks_(*this), server_callbacks_(*this) {
   hid_.SetTelemetrySink(&transport_);
 }
 
@@ -72,6 +72,7 @@ void AirKvmApp::Setup() {
   rx_char->setCallbacks(&rx_callbacks_);
   NimBLECharacteristic* tx_char = service->createCharacteristic(
       kTxCharUuid, NIMBLE_PROPERTY::READ | NIMBLE_PROPERTY::NOTIFY);
+  tx_char->setCallbacks(&tx_callbacks_);
   transport_.SetBleTxCharacteristic(tx_char);
 
   service->start();
@@ -184,6 +185,22 @@ void AirKvmApp::DrainBleRxQueue() {
   }
 }
 #endif
+
+AirKvmApp::TxCallbacks::TxCallbacks(AirKvmApp& app) : app_(app) {}
+
+void AirKvmApp::TxCallbacks::onSubscribe(NimBLECharacteristic* /*characteristic*/,
+                                          ble_gap_conn_desc* /*desc*/,
+                                          uint16_t sub_value) {
+  // sub_value 1 = notifications enabled; send boot frame so the extension
+  // can resolve its handshake without requiring MCP to be running.
+  if (sub_value == 1) {
+    app_.OnBleSubscribed();
+  }
+}
+
+void AirKvmApp::OnBleSubscribed() {
+  transport_.EmitControlToBle(kBootMsg);
+}
 
 AirKvmApp::RxCallbacks::RxCallbacks(AirKvmApp& app) : app_(app) {}
 
