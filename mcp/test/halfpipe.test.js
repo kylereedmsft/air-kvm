@@ -4,7 +4,7 @@ import { HalfPipe } from '../../shared/halfpipe.js';
 import {
   decodeFrame,
   kFrameType,
-  kV2MaxPayload,
+  kMaxPayload,
   encodeChunkFrame,
   encodeAckFrame,
   encodeNackFrame,
@@ -88,7 +88,7 @@ describe('HalfPipe TX', () => {
     const f = inspectFrame(cap.frames[0]);
     assert.ok(f.ok);
     assert.equal(f.type, kFrameType.CHUNK);
-    assert.ok(f.payload.length < kV2MaxPayload);
+    assert.ok(f.payload.length < kMaxPayload);
 
     // Verify payload is the JSON
     assert.deepEqual(JSON.parse(dec.decode(f.payload)), obj);
@@ -103,7 +103,7 @@ describe('HalfPipe TX', () => {
     const obj = JSON.parse(json);
     const p = hp.send(obj);
 
-    const expectedChunks = Math.ceil(600 / kV2MaxPayload); // 3 chunks (255+255+90)
+    const expectedChunks = Math.ceil(600 / kMaxPayload); // 3 chunks (255+255+90)
 
     // ACK each chunk as it appears
     for (let i = 0; i < expectedChunks; i += 1) {
@@ -265,10 +265,10 @@ describe('HalfPipe RX', () => {
     let received = null;
     hp.onMessage((msg) => { received = msg; });
 
-    const numChunks = Math.ceil(bytes.length / kV2MaxPayload);
+    const numChunks = Math.ceil(bytes.length / kMaxPayload);
     for (let i = 0; i < numChunks; i += 1) {
-      const start = i * kV2MaxPayload;
-      const end = Math.min(start + kV2MaxPayload, bytes.length);
+      const start = i * kMaxPayload;
+      const end = Math.min(start + kMaxPayload, bytes.length);
       hp.onFrame({
         type: kFrameType.CHUNK,
         transferId: tid,
@@ -350,7 +350,7 @@ describe('HalfPipe RX', () => {
     hp.onMessage((msg) => { received = msg; });
 
     // Start transfer A with a full 255-byte chunk (not final)
-    const padA = new Uint8Array(kV2MaxPayload).fill(0x61); // 'a' repeated
+    const padA = new Uint8Array(kMaxPayload).fill(0x61); // 'a' repeated
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 300, seq: 0, payload: padA });
     assert.equal(received, null);
 
@@ -405,7 +405,7 @@ describe('HalfPipe Reset', () => {
     hp.onMessage((msg) => { received = msg; });
 
     // Feed partial chunk (255 bytes, not final)
-    const pad = new Uint8Array(kV2MaxPayload).fill(0x61);
+    const pad = new Uint8Array(kMaxPayload).fill(0x61);
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 400, seq: 0, payload: pad });
     assert.equal(received, null);
 
@@ -432,7 +432,7 @@ describe('HalfPipe Reset', () => {
     await new Promise(r => setTimeout(r, 10));
 
     // Feed partial RX
-    const pad = new Uint8Array(kV2MaxPayload).fill(0x61);
+    const pad = new Uint8Array(kMaxPayload).fill(0x61);
     hp.onFrame({ type: kFrameType.CHUNK, transferId: 500, seq: 0, payload: pad });
 
     // Incoming reset

@@ -32,7 +32,7 @@ export function crc32(bytes) {
 }
 
 // ============================================================
-// v2 constants
+// frame constants
 // ============================================================
 export const kFrameType = {
   CHUNK:   0x01,
@@ -45,13 +45,13 @@ export const kFrameType = {
 
 const kValidTypes = new Set(Object.values(kFrameType));
 
-export const kV2HeaderLen   = 8;  // magic(2) + type(1) + txid(2) + seq(2) + len(1)
-export const kV2CrcLen      = 4;
-export const kV2MinFrameLen = 12; // header + crc, zero payload
-export const kV2MaxPayload  = 255;
+export const kHeaderLen   = 8;  // magic(2) + type(1) + txid(2) + seq(2) + len(1)
+export const kCrcLen      = 4;
+export const kMinFrameLen = 12; // header + crc, zero payload
+export const kMaxPayload  = 255;
 
 // ============================================================
-// v2 encoder
+// frame encoder
 // ============================================================
 export function encodeFrame({ type, transferId, seq, payload }) {
   if (!kValidTypes.has(type)) {
@@ -67,11 +67,11 @@ export function encodeFrame({ type, transferId, seq, payload }) {
   if (!(p instanceof Uint8Array)) {
     throw new Error('invalid_payload');
   }
-  if (p.length > kV2MaxPayload) {
+  if (p.length > kMaxPayload) {
     throw new Error('payload_too_large');
   }
 
-  const frameLen = kV2HeaderLen + p.length + kV2CrcLen;
+  const frameLen = kHeaderLen + p.length + kCrcLen;
   const out = new Uint8Array(frameLen);
   const view = new DataView(out.buffer);
 
@@ -82,20 +82,20 @@ export function encodeFrame({ type, transferId, seq, payload }) {
   view.setUint16(5, seq, true);
   out[7] = p.length;
   if (p.length > 0) {
-    out.set(p, kV2HeaderLen);
+    out.set(p, kHeaderLen);
   }
 
   // CRC covers bytes 2 .. end-of-payload (type + txid + seq + len + payload)
-  const crcVal = crc32(out.subarray(2, kV2HeaderLen + p.length));
-  view.setUint32(kV2HeaderLen + p.length, crcVal >>> 0, true);
+  const crcVal = crc32(out.subarray(2, kHeaderLen + p.length));
+  view.setUint32(kHeaderLen + p.length, crcVal >>> 0, true);
   return out;
 }
 
 // ============================================================
-// v2 decoder
+// frame decoder
 // ============================================================
 export function decodeFrame(bytes) {
-  if (!(bytes instanceof Uint8Array) || bytes.length < kV2MinFrameLen) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < kMinFrameLen) {
     return { ok: false, error: 'frame_too_short' };
   }
   if (bytes[0] !== kMagic0 || bytes[1] !== kMagic1) {
@@ -110,16 +110,16 @@ export function decodeFrame(bytes) {
   const seq = view.getUint16(5, true);
   const len = bytes[7];
 
-  const expectedLen = kV2HeaderLen + len + kV2CrcLen;
+  const expectedLen = kHeaderLen + len + kCrcLen;
   if (bytes.length < expectedLen) {
     return { ok: false, error: 'length_mismatch', type, transferId, seq, len };
   }
 
-  const payload = bytes.slice(kV2HeaderLen, kV2HeaderLen + len);
+  const payload = bytes.slice(kHeaderLen, kHeaderLen + len);
 
   // CRC check: covers bytes 2 .. end-of-payload
-  const crcRegion = bytes.subarray(2, kV2HeaderLen + len);
-  const gotCrc = view.getUint32(kV2HeaderLen + len, true) >>> 0;
+  const crcRegion = bytes.subarray(2, kHeaderLen + len);
+  const gotCrc = view.getUint32(kHeaderLen + len, true) >>> 0;
   const wantCrc = crc32(crcRegion);
   if (gotCrc !== wantCrc) {
     return { ok: false, error: 'crc_mismatch', type, transferId, seq, gotCrc, wantCrc };
@@ -129,21 +129,21 @@ export function decodeFrame(bytes) {
 }
 
 // ============================================================
-// v2 stream extractor
+// stream extractor
 // ============================================================
-export function tryExtractV2Frame(buffer) {
+export function tryExtractFrame(buffer) {
   if (!(buffer instanceof Uint8Array) || buffer.length === 0) {
     return null;
   }
   if (buffer[0] !== kMagic0 || buffer[1] !== kMagic1) {
     return null;
   }
-  if (buffer.length < kV2MinFrameLen) {
+  if (buffer.length < kMinFrameLen) {
     return null; // magic present but incomplete
   }
 
   const len = buffer[7];
-  const frameLen = kV2HeaderLen + len + kV2CrcLen;
+  const frameLen = kHeaderLen + len + kCrcLen;
   if (buffer.length < frameLen) {
     return null; // incomplete frame
   }
@@ -160,14 +160,14 @@ export function tryExtractV2Frame(buffer) {
 }
 
 // ============================================================
-// v2 transfer ID helper
+// transfer ID helper
 // ============================================================
-export function makeV2TransferId() {
+export function makeTransferId() {
   return Math.floor(Math.random() * 0x10000);
 }
 
 // ============================================================
-// v2 convenience encoders
+// convenience encoders
 // ============================================================
 export function encodeChunkFrame({ transferId, seq, payload }) {
   return encodeFrame({ type: kFrameType.CHUNK, transferId, seq, payload });
@@ -188,12 +188,12 @@ function toUtf8(str) {
   return new Uint8Array(arr);
 }
 
-export function encodeControlFrameV2(msg) {
+export function encodeControlFrame(msg) {
   const payload = toUtf8(JSON.stringify(msg));
   return encodeFrame({ type: kFrameType.CONTROL, transferId: 0, seq: 0, payload });
 }
 
-export function encodeLogFrameV2(text) {
+export function encodeLogFrame(text) {
   const payload = toUtf8(text);
   return encodeFrame({ type: kFrameType.LOG, transferId: 0, seq: 0, payload });
 }

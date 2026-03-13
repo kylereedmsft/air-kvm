@@ -1,5 +1,5 @@
 import { SerialPort } from 'serialport';
-import { kMagic0, kMagic1, tryExtractV2Frame, encodeControlFrameV2 } from '../../shared/binary_frame.js';
+import { kMagic0, kMagic1, tryExtractFrame, encodeControlFrame } from '../../shared/binary_frame.js';
 import { HalfPipe } from '../../shared/halfpipe.js';
 
 export class UartTransport {
@@ -92,7 +92,7 @@ export class UartTransport {
         continue;
       }
 
-      const result = tryExtractV2Frame(this.readBuffer);
+      const result = tryExtractFrame(this.readBuffer);
       if (result && result.frame.type !== 'error') {
         this.readBuffer = this.readBuffer.subarray(result.consumed);
         if (this.halfpipe) {
@@ -103,7 +103,7 @@ export class UartTransport {
 
       // Bad CRC or decode error — consume bytes, log, and continue
       if (result) {
-        this.log(`v2 frame error: ${result.frame.error}`);
+        this.log(`frame error: ${result.frame.error}`);
         this.readBuffer = this.readBuffer.subarray(result.consumed);
         continue;
       }
@@ -172,7 +172,7 @@ export class UartTransport {
         }
       });
 
-      const frameBytes = encodeControlFrameV2(command);
+      const frameBytes = encodeControlFrame(command);
       this.serialPort.write(frameBytes, (err) => {
         if (err) { finish(reject, err); return; }
         this.serialPort.drain((drainErr) => {

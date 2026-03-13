@@ -5,17 +5,17 @@ import {
   kMagic0,
   kMagic1,
   kFrameType,
-  kV2HeaderLen,
-  kV2CrcLen,
-  kV2MinFrameLen,
-  kV2MaxPayload,
+  kHeaderLen,
+  kCrcLen,
+  kMinFrameLen,
+  kMaxPayload,
   encodeFrame,
   decodeFrame,
-  tryExtractV2Frame,
-  makeV2TransferId,
+  tryExtractFrame,
+  makeTransferId,
   encodeChunkFrame,
-  encodeControlFrameV2,
-  encodeLogFrameV2,
+  encodeControlFrame,
+  encodeLogFrame,
   encodeAckFrame,
   encodeNackFrame,
   encodeResetFrame,
@@ -42,9 +42,9 @@ function concat(...arrays) {
 }
 
 // -------------------------------------------------------
-// v2 round-trip all 6 types
+// round-trip all 6 types
 // -------------------------------------------------------
-describe('v2 round-trip all 6 types', () => {
+describe('round-trip all 6 types', () => {
   const types = [
     { name: 'CHUNK',   type: kFrameType.CHUNK,   payload: new Uint8Array([1, 2, 3]) },
     { name: 'CONTROL', type: kFrameType.CONTROL,  payload: enc.encode('{"a":1}') },
@@ -82,12 +82,12 @@ describe('chunk frame with data', () => {
 });
 
 // -------------------------------------------------------
-// control frame v2
+// control frame
 // -------------------------------------------------------
-describe('control frame v2', () => {
+describe('control frame', () => {
   it('encodes JSON object and decodes payload', () => {
     const msg = { action: 'ping', ts: 12345 };
-    const frame = encodeControlFrameV2(msg);
+    const frame = encodeControlFrame(msg);
     const r = decodeFrame(frame);
     assert.equal(r.ok, true);
     assert.equal(r.type, kFrameType.CONTROL);
@@ -97,12 +97,12 @@ describe('control frame v2', () => {
 });
 
 // -------------------------------------------------------
-// log frame v2
+// log frame
 // -------------------------------------------------------
-describe('log frame v2', () => {
+describe('log frame', () => {
   it('encodes text and decodes payload', () => {
     const text = 'debug info line';
-    const frame = encodeLogFrameV2(text);
+    const frame = encodeLogFrame(text);
     const r = decodeFrame(frame);
     assert.equal(r.ok, true);
     assert.equal(r.type, kFrameType.LOG);
@@ -162,7 +162,7 @@ describe('CRC validation', () => {
   it('corrupt one byte → crc_mismatch', () => {
     const frame = encodeFrame({ type: kFrameType.CHUNK, transferId: 1, seq: 0, payload: new Uint8Array([0x42]) });
     // corrupt payload byte
-    frame[kV2HeaderLen] ^= 0xff;
+    frame[kHeaderLen] ^= 0xff;
     const r = decodeFrame(frame);
     assert.equal(r.ok, false);
     assert.equal(r.error, 'crc_mismatch');
@@ -228,7 +228,7 @@ describe('transfer ID boundaries', () => {
   }
 
   it('random transferId round-trips', () => {
-    const tid = makeV2TransferId();
+    const tid = makeTransferId();
     const frame = encodeFrame({ type: kFrameType.ACK, transferId: tid, seq: 0 });
     const r = decodeFrame(frame);
     assert.equal(r.transferId, tid);
@@ -330,28 +330,28 @@ describe('length mismatch', () => {
 });
 
 // -------------------------------------------------------
-// tryExtractV2Frame: multiple frames
+// tryExtractFrame: multiple frames
 // -------------------------------------------------------
-describe('tryExtractV2Frame: multiple frames', () => {
+describe('tryExtractFrame: multiple frames', () => {
   it('extracts 3 frames sequentially', () => {
     const f1 = encodeFrame({ type: kFrameType.CHUNK, transferId: 1, seq: 0, payload: new Uint8Array([0xAA]) });
     const f2 = encodeFrame({ type: kFrameType.ACK, transferId: 2, seq: 1 });
     const f3 = encodeFrame({ type: kFrameType.LOG, transferId: 3, seq: 2, payload: enc.encode('hi') });
     let buf = concat(f1, f2, f3);
 
-    const r1 = tryExtractV2Frame(buf);
+    const r1 = tryExtractFrame(buf);
     assert.notEqual(r1, null);
     assert.equal(r1.frame.type, kFrameType.CHUNK);
     assert.equal(r1.consumed, f1.length);
     buf = buf.slice(r1.consumed);
 
-    const r2 = tryExtractV2Frame(buf);
+    const r2 = tryExtractFrame(buf);
     assert.notEqual(r2, null);
     assert.equal(r2.frame.type, kFrameType.ACK);
     assert.equal(r2.consumed, f2.length);
     buf = buf.slice(r2.consumed);
 
-    const r3 = tryExtractV2Frame(buf);
+    const r3 = tryExtractFrame(buf);
     assert.notEqual(r3, null);
     assert.equal(r3.frame.type, kFrameType.LOG);
     assert.equal(r3.consumed, f3.length);
@@ -359,33 +359,33 @@ describe('tryExtractV2Frame: multiple frames', () => {
 });
 
 // -------------------------------------------------------
-// tryExtractV2Frame: partial frame
+// tryExtractFrame: partial frame
 // -------------------------------------------------------
-describe('tryExtractV2Frame: partial frame', () => {
+describe('tryExtractFrame: partial frame', () => {
   it('half a frame → null', () => {
     const frame = encodeFrame({ type: kFrameType.CHUNK, transferId: 1, seq: 0, payload: fillBytes(50) });
     const half = frame.slice(0, Math.floor(frame.length / 2));
-    assert.equal(tryExtractV2Frame(half), null);
+    assert.equal(tryExtractFrame(half), null);
   });
 });
 
 // -------------------------------------------------------
-// tryExtractV2Frame: empty buffer
+// tryExtractFrame: empty buffer
 // -------------------------------------------------------
-describe('tryExtractV2Frame: empty buffer', () => {
+describe('tryExtractFrame: empty buffer', () => {
   it('returns null', () => {
-    assert.equal(tryExtractV2Frame(new Uint8Array(0)), null);
+    assert.equal(tryExtractFrame(new Uint8Array(0)), null);
   });
 });
 
 // -------------------------------------------------------
-// tryExtractV2Frame: CRC error
+// tryExtractFrame: CRC error
 // -------------------------------------------------------
-describe('tryExtractV2Frame: CRC error', () => {
+describe('tryExtractFrame: CRC error', () => {
   it('returns error frame + consumed', () => {
     const frame = encodeFrame({ type: kFrameType.CHUNK, transferId: 1, seq: 0, payload: new Uint8Array([0x42]) });
-    frame[kV2HeaderLen] ^= 0xff; // corrupt payload
-    const r = tryExtractV2Frame(frame);
+    frame[kHeaderLen] ^= 0xff; // corrupt payload
+    const r = tryExtractFrame(frame);
     assert.notEqual(r, null);
     assert.equal(r.frame.type, 'error');
     assert.equal(r.frame.error, 'crc_mismatch');
@@ -406,12 +406,12 @@ describe('frame size', () => {
 });
 
 // -------------------------------------------------------
-// makeV2TransferId
+// makeTransferId
 // -------------------------------------------------------
-describe('makeV2TransferId', () => {
+describe('makeTransferId', () => {
   it('returns integer in 0–65535', () => {
     for (let i = 0; i < 100; i++) {
-      const tid = makeV2TransferId();
+      const tid = makeTransferId();
       assert.equal(Number.isInteger(tid), true);
       assert.ok(tid >= 0 && tid <= 0xffff, `${tid} out of range`);
     }

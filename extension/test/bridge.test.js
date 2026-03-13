@@ -10,7 +10,7 @@ import {
   setBleDebugLogger,
   setBleVerboseDebug
 } from '../src/bridge.js';
-import { tryExtractV2Frame, encodeChunkFrame, makeV2TransferId } from '../../shared/binary_frame.js';
+import { tryExtractFrame, encodeChunkFrame, makeTransferId } from '../../shared/binary_frame.js';
 
 function telemetryEvents(logged) {
   const events = [];
@@ -52,7 +52,7 @@ test('connectBle establishes UART RX characteristic via navigator.bluetooth', as
   };
 
   const connected = await connectBle({ navigatorLike });
-  const testFrame = encodeChunkFrame({ transferId: makeV2TransferId(), seq: 0, payload: new Uint8Array([1]) });
+  const testFrame = encodeChunkFrame({ transferId: makeTransferId(), seq: 0, payload: new Uint8Array([1]) });
   const posted = await postBinary(testFrame, { traceId: 'connect-verify' });
 
   assert.equal(connected, true);
@@ -207,7 +207,7 @@ test('postBinary emits tx fallback telemetry and withResponse failure telemetry'
   const connected = await connectBle({ navigatorLike });
   assert.equal(connected, true);
 
-  const testFrame = encodeChunkFrame({ transferId: makeV2TransferId(), seq: 0, payload: new Uint8Array([1]) });
+  const testFrame = encodeChunkFrame({ transferId: makeTransferId(), seq: 0, payload: new Uint8Array([1]) });
   const ok = await postBinary(testFrame, { traceId: 'trace-1' });
   assert.equal(ok, false);
 
@@ -289,7 +289,7 @@ test('postBinary emits tx telemetry with binary payload type', async () => {
   )), true);
 });
 
-test('postBinary sends AK v2 CHUNK frame bytes verbatim across BLE writes', async () => {
+test('postBinary sends AK CHUNK frame bytes verbatim across BLE writes', async () => {
   __resetBleForTest();
   const writes = [];
   const rx = {
@@ -323,11 +323,11 @@ test('postBinary sends AK v2 CHUNK frame bytes verbatim across BLE writes', asyn
 
   // Build a multi-chunk CHUNK frame large enough to exceed one BLE write
   const largePayload = new Uint8Array(300).fill(0xAB);
-  const frame = encodeChunkFrame({ transferId: makeV2TransferId(), seq: 0, payload: largePayload.slice(0, 255) });
+  const frame = encodeChunkFrame({ transferId: makeTransferId(), seq: 0, payload: largePayload.slice(0, 255) });
   const ok = await postBinary(frame, { traceId: 'trace-big-1' });
   assert.equal(ok, true);
 
-  // Reassemble all writes and verify it's a valid AK v2 frame
+  // Reassemble all writes and verify it's a valid AK frame
   const total = writes.reduce((sum, chunk) => sum + chunk.length, 0);
   const merged = new Uint8Array(total);
   let cursor = 0;
@@ -335,7 +335,7 @@ test('postBinary sends AK v2 CHUNK frame bytes verbatim across BLE writes', asyn
     merged.set(chunk, cursor);
     cursor += chunk.length;
   }
-  const result = tryExtractV2Frame(merged);
+  const result = tryExtractFrame(merged);
   assert.ok(result, 'merged bytes should be a valid AK frame');
   assert.equal(result.frame.type, 1); // CHUNK = 0x01
 });

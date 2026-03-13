@@ -285,7 +285,7 @@ export async function connectBle(deps = {}) {
       const raw = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
       debugVerbose('rx notify', { bytes: raw.length, hex: bytesToHex(raw) });
 
-      // Forward raw bytes to service worker for v2 binary frame extraction
+      // Forward raw bytes to service worker for binary frame extraction
       const onCmd = deps.onCommand || commandHandler;
       if (typeof onCmd === 'function') {
         onCmd({ type: '__ble_raw_bytes', bytes: Array.from(raw) });

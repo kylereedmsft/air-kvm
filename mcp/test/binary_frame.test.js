@@ -3,20 +3,20 @@ import assert from 'node:assert/strict';
 
 import {
   kFrameType,
-  kV2HeaderLen,
-  kV2CrcLen,
-  kV2MinFrameLen,
-  kV2MaxPayload,
+  kHeaderLen,
+  kCrcLen,
+  kMinFrameLen,
+  kMaxPayload,
   encodeFrame,
   decodeFrame,
-  tryExtractV2Frame,
-  makeV2TransferId,
+  tryExtractFrame,
+  makeTransferId,
   encodeChunkFrame,
   encodeAckFrame,
   encodeNackFrame,
   encodeResetFrame,
-  encodeControlFrameV2,
-  encodeLogFrameV2,
+  encodeControlFrame,
+  encodeLogFrame,
 } from '../../shared/binary_frame.js';
 
 // Shared code returns Uint8Array; helpers for test convenience.
@@ -32,9 +32,9 @@ function concatU8(...arrays) {
   return out;
 }
 
-// ── v2 tests ────────────────────────────────────────────────────────
+// ── frame tests ────────────────────────────────────────────────────────
 
-test('v2: round-trip all 6 frame types', () => {
+test('frame: round-trip all 6 frame types', () => {
   const types = [
     { type: kFrameType.CHUNK,   payload: u8('data') },
     { type: kFrameType.CONTROL, payload: u8('{"a":1}') },
@@ -54,7 +54,7 @@ test('v2: round-trip all 6 frame types', () => {
   }
 });
 
-test('v2: chunk frame with known payload', () => {
+test('frame: chunk frame with known payload', () => {
   const payload = u8FromBytes([0xDE, 0xAD, 0xBE, 0xEF]);
   const encoded = encodeChunkFrame({ transferId: 100, seq: 3, payload });
   const decoded = decodeFrame(encoded);
@@ -63,9 +63,9 @@ test('v2: chunk frame with known payload', () => {
   assert.deepEqual(decoded.payload, payload);
 });
 
-test('v2: control frame v2 JSON roundtrip', () => {
+test('frame: control frame JSON roundtrip', () => {
   const msg = { action: 'ping', value: 42 };
-  const encoded = encodeControlFrameV2(msg);
+  const encoded = encodeControlFrame(msg);
   const decoded = decodeFrame(encoded);
   assert.equal(decoded.ok, true);
   assert.equal(decoded.type, kFrameType.CONTROL);
@@ -73,16 +73,16 @@ test('v2: control frame v2 JSON roundtrip', () => {
   assert.deepEqual(parsed, msg);
 });
 
-test('v2: log frame v2 text roundtrip', () => {
-  const text = 'hello v2 log';
-  const encoded = encodeLogFrameV2(text);
+test('frame: log frame text roundtrip', () => {
+  const text = 'hello log';
+  const encoded = encodeLogFrame(text);
   const decoded = decodeFrame(encoded);
   assert.equal(decoded.ok, true);
   assert.equal(decoded.type, kFrameType.LOG);
   assert.equal(dec.decode(decoded.payload), text);
 });
 
-test('v2: ack/nack/reset zero payload', () => {
+test('frame: ack/nack/reset zero payload', () => {
   for (const { fn, type, seq } of [
     { fn: () => encodeAckFrame({ transferId: 10, seq: 5 }), type: kFrameType.ACK, seq: 5 },
     { fn: () => encodeNackFrame({ transferId: 20, seq: 8 }), type: kFrameType.NACK, seq: 8 },
@@ -96,7 +96,7 @@ test('v2: ack/nack/reset zero payload', () => {
   }
 });
 
-test('v2: reset always has seq=0', () => {
+test('frame: reset always has seq=0', () => {
   const encoded = encodeResetFrame({ transferId: 999 });
   const decoded = decodeFrame(encoded);
   assert.equal(decoded.ok, true);
@@ -104,16 +104,16 @@ test('v2: reset always has seq=0', () => {
   assert.equal(decoded.transferId, 999);
 });
 
-test('v2: CRC validation – corrupt payload byte', () => {
+test('frame: CRC validation – corrupt payload byte', () => {
   const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload: u8('hello') });
   const corrupted = new Uint8Array(encoded);
-  corrupted[kV2HeaderLen] ^= 0xff; // flip first payload byte
+  corrupted[kHeaderLen] ^= 0xff; // flip first payload byte
   const decoded = decodeFrame(corrupted);
   assert.equal(decoded.ok, false);
   assert.equal(decoded.error, 'crc_mismatch');
 });
 
-test('v2: max payload (255 bytes)', () => {
+test('frame: max payload (255 bytes)', () => {
   const payload = new Uint8Array(255).fill(0xAB);
   const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload });
   const decoded = decodeFrame(encoded);
@@ -122,12 +122,12 @@ test('v2: max payload (255 bytes)', () => {
   assert.deepEqual(decoded.payload, payload);
 });
 
-test('v2: payload too large (256 bytes) throws', () => {
+test('frame: payload too large (256 bytes) throws', () => {
   const payload = new Uint8Array(256);
   assert.throws(() => encodeChunkFrame({ transferId: 1, seq: 0, payload }), /payload_too_large/);
 });
 
-test('v2: empty payload chunk (zero-length terminator)', () => {
+test('frame: empty payload chunk (zero-length terminator)', () => {
   const encoded = encodeChunkFrame({ transferId: 50, seq: 3, payload: new Uint8Array(0) });
   const decoded = decodeFrame(encoded);
   assert.equal(decoded.ok, true);
@@ -137,7 +137,7 @@ test('v2: empty payload chunk (zero-length terminator)', () => {
   assert.equal(decoded.seq, 3);
 });
 
-test('v2: transfer ID boundaries', () => {
+test('frame: transfer ID boundaries', () => {
   for (const tid of [0, 65535, 12345]) {
     const encoded = encodeChunkFrame({ transferId: tid, seq: 0, payload: u8('x') });
     const decoded = decodeFrame(encoded);
@@ -146,7 +146,7 @@ test('v2: transfer ID boundaries', () => {
   }
 });
 
-test('v2: seq boundaries', () => {
+test('frame: seq boundaries', () => {
   for (const seq of [0, 65535]) {
     const encoded = encodeChunkFrame({ transferId: 1, seq, payload: u8('y') });
     const decoded = decodeFrame(encoded);
@@ -155,18 +155,18 @@ test('v2: seq boundaries', () => {
   }
 });
 
-test('v2: invalid transferId throws', () => {
+test('frame: invalid transferId throws', () => {
   assert.throws(() => encodeFrame({ type: kFrameType.CHUNK, transferId: 70000, seq: 0, payload: new Uint8Array(0) }), /invalid_transfer_id/);
   assert.throws(() => encodeFrame({ type: kFrameType.CHUNK, transferId: -1, seq: 0, payload: new Uint8Array(0) }), /invalid_transfer_id/);
 });
 
-test('v2: invalid seq throws', () => {
+test('frame: invalid seq throws', () => {
   assert.throws(() => encodeFrame({ type: kFrameType.CHUNK, transferId: 0, seq: 70000, payload: new Uint8Array(0) }), /invalid_seq/);
   assert.throws(() => encodeFrame({ type: kFrameType.CHUNK, transferId: 0, seq: -1, payload: new Uint8Array(0) }), /invalid_seq/);
 });
 
-test('v2: bad magic', () => {
-  const buf = new Uint8Array(kV2MinFrameLen);
+test('frame: bad magic', () => {
+  const buf = new Uint8Array(kMinFrameLen);
   buf[0] = 0x00;
   buf[1] = 0x00;
   const decoded = decodeFrame(buf);
@@ -174,13 +174,13 @@ test('v2: bad magic', () => {
   assert.equal(decoded.error, 'bad_magic');
 });
 
-test('v2: truncated frame', () => {
+test('frame: truncated frame', () => {
   const decoded = decodeFrame(new Uint8Array(8));
   assert.equal(decoded.ok, false);
   assert.equal(decoded.error, 'frame_too_short');
 });
 
-test('v2: length mismatch', () => {
+test('frame: length mismatch', () => {
   const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload: u8('hello') });
   // Truncate: remove last 2 bytes so len field says 5 but data is shorter
   const truncated = new Uint8Array(encoded.subarray(0, encoded.length - 2));
@@ -189,51 +189,51 @@ test('v2: length mismatch', () => {
   assert.equal(decoded.error, 'length_mismatch');
 });
 
-test('v2: tryExtractV2Frame – multiple frames', () => {
+test('frame: tryExtractFrame – multiple frames', () => {
   const f1 = encodeChunkFrame({ transferId: 1, seq: 0, payload: u8('aaa') });
   const f2 = encodeAckFrame({ transferId: 2, seq: 1 });
-  const f3 = encodeLogFrameV2('test');
+  const f3 = encodeLogFrame('test');
   const joined = concatU8(f1, f2, f3);
 
-  const r1 = tryExtractV2Frame(joined);
+  const r1 = tryExtractFrame(joined);
   assert.ok(r1);
   assert.equal(r1.frame.type, kFrameType.CHUNK);
   assert.equal(r1.frame.transferId, 1);
   assert.deepEqual(r1.frame.payload, u8('aaa'));
 
-  const r2 = tryExtractV2Frame(joined.subarray(r1.consumed));
+  const r2 = tryExtractFrame(joined.subarray(r1.consumed));
   assert.ok(r2);
   assert.equal(r2.frame.type, kFrameType.ACK);
   assert.equal(r2.frame.transferId, 2);
 
-  const r3 = tryExtractV2Frame(joined.subarray(r1.consumed + r2.consumed));
+  const r3 = tryExtractFrame(joined.subarray(r1.consumed + r2.consumed));
   assert.ok(r3);
   assert.equal(r3.frame.type, kFrameType.LOG);
   assert.equal(dec.decode(r3.frame.payload), 'test');
 });
 
-test('v2: tryExtractV2Frame – partial frame returns null', () => {
+test('frame: tryExtractFrame – partial frame returns null', () => {
   const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload: u8('data') });
   const half = encoded.subarray(0, Math.floor(encoded.length / 2));
-  assert.equal(tryExtractV2Frame(half), null);
+  assert.equal(tryExtractFrame(half), null);
 });
 
-test('v2: tryExtractV2Frame – empty buffer returns null', () => {
-  assert.equal(tryExtractV2Frame(new Uint8Array(0)), null);
+test('frame: tryExtractFrame – empty buffer returns null', () => {
+  assert.equal(tryExtractFrame(new Uint8Array(0)), null);
 });
 
-test('v2: tryExtractV2Frame – error frame on bad CRC', () => {
+test('frame: tryExtractFrame – error frame on bad CRC', () => {
   const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload: u8('hi') });
   const corrupted = new Uint8Array(encoded);
-  corrupted[kV2HeaderLen] ^= 0xff;
-  const result = tryExtractV2Frame(corrupted);
+  corrupted[kHeaderLen] ^= 0xff;
+  const result = tryExtractFrame(corrupted);
   assert.ok(result);
   assert.equal(result.frame.type, 'error');
   assert.equal(result.frame.error, 'crc_mismatch');
   assert.equal(result.consumed, corrupted.length);
 });
 
-test('v2: frame size verification', () => {
+test('frame: frame size verification', () => {
   for (const n of [0, 1, 100, 255]) {
     const payload = new Uint8Array(n).fill(0x42);
     const encoded = encodeChunkFrame({ transferId: 1, seq: 0, payload });
@@ -241,15 +241,15 @@ test('v2: frame size verification', () => {
   }
 });
 
-test('v2: makeV2TransferId returns integer 0–65535', () => {
+test('frame: makeTransferId returns integer 0–65535', () => {
   for (let i = 0; i < 50; i++) {
-    const tid = makeV2TransferId();
+    const tid = makeTransferId();
     assert.ok(Number.isInteger(tid));
     assert.ok(tid >= 0 && tid <= 65535);
   }
 });
 
-test('v2: bad type throws', () => {
+test('frame: bad type throws', () => {
   assert.throws(() => encodeFrame({ type: 0x07, transferId: 0, seq: 0, payload: new Uint8Array(0) }), /bad_type/);
   assert.throws(() => encodeFrame({ type: 0x00, transferId: 0, seq: 0, payload: new Uint8Array(0) }), /bad_type/);
 });

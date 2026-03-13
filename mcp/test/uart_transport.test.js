@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 
 import { UartTransport } from '../src/uart.js';
 import {
-  encodeControlFrameV2,
-  encodeLogFrameV2,
+  encodeControlFrame,
+  encodeLogFrame,
   encodeChunkFrame,
   encodeAckFrame,
   kFrameType,
@@ -48,14 +48,14 @@ function makeTestTransport(commandTimeoutMs = 100) {
   return { transport, writes };
 }
 
-test('onData routes valid v2 frame to halfpipe', async () => {
+test('onData routes valid frame to halfpipe', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
   const received = [];
   transport.halfpipe.onFrame = (frame) => received.push(frame);
 
-  const frame = encodeControlFrameV2({ ok: true, type: 'state' });
+  const frame = encodeControlFrame({ ok: true, type: 'state' });
   transport.onData(frame);
 
   assert.equal(received.length, 1);
@@ -71,7 +71,7 @@ test('onData skips non-magic bytes', async () => {
   transport.halfpipe.onFrame = (frame) => received.push(frame);
 
   const garbage = Buffer.from([0x00, 0x01, 0x02, 0xFF]);
-  const frame = encodeControlFrameV2({ ok: true });
+  const frame = encodeControlFrame({ ok: true });
   transport.onData(Buffer.concat([garbage, frame]));
 
   assert.equal(received.length, 1);
@@ -86,7 +86,7 @@ test('onData handles corrupted frame (bad CRC)', async () => {
   const received = [];
   transport.halfpipe.onFrame = (frame) => received.push(frame);
 
-  const frame = encodeControlFrameV2({ ok: true });
+  const frame = encodeControlFrame({ ok: true });
   const corrupted = Buffer.from(frame);
   corrupted[8] ^= 0xff; // corrupt payload byte
   transport.onData(corrupted);
@@ -104,7 +104,7 @@ test('onData handles incomplete frame (waits for more data)', async () => {
   const received = [];
   transport.halfpipe.onFrame = (frame) => received.push(frame);
 
-  const frame = encodeControlFrameV2({ ok: true });
+  const frame = encodeControlFrame({ ok: true });
   const half1 = frame.subarray(0, 6);
   const half2 = frame.subarray(6);
 

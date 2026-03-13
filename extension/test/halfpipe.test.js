@@ -4,7 +4,7 @@ import { HalfPipe } from '../../shared/halfpipe.js';
 import {
   decodeFrame,
   kFrameType,
-  kV2MaxPayload,
+  kMaxPayload,
 } from '../../shared/binary_frame.js';
 
 // ---------------------------------------------------------------------------
@@ -71,7 +71,7 @@ test('TX 1: small message (single chunk)', async () => {
   const decoded = decodeAll(frames);
   const chunks = chunkFrames(decoded);
   assert.equal(chunks.length, 1, 'should have 1 chunk');
-  assert.ok(chunks[0].payload.length < kV2MaxPayload, 'single chunk < 255');
+  assert.ok(chunks[0].payload.length < kMaxPayload, 'single chunk < 255');
 
   // ACK it
   simulateAck(hp, chunks[0].transferId, chunks[0].seq);
@@ -250,7 +250,7 @@ test('RX 9: single chunk receive', async () => {
 
   const obj = { type: 'test', value: 42 };
   const payload = new TextEncoder().encode(JSON.stringify(obj));
-  assert.ok(payload.length < kV2MaxPayload, 'payload must be < 255 for single chunk');
+  assert.ok(payload.length < kMaxPayload, 'payload must be < 255 for single chunk');
 
   hp.onFrame({ type: kFrameType.CHUNK, transferId: 100, seq: 0, payload });
 
@@ -269,8 +269,8 @@ test('RX 10: multi-chunk receive', async () => {
   const transferId = 200;
 
   let seq = 0;
-  for (let off = 0; off < bytes.length; off += kV2MaxPayload) {
-    const chunk = bytes.slice(off, off + kV2MaxPayload);
+  for (let off = 0; off < bytes.length; off += kMaxPayload) {
+    const chunk = bytes.slice(off, off + kMaxPayload);
     hp.onFrame({ type: kFrameType.CHUNK, transferId, seq, payload: chunk });
     seq += 1;
   }
@@ -316,7 +316,7 @@ test('RX 12: ACK sent for each chunk', async () => {
   hp.onMessage(() => {});
 
   const transferId = 400;
-  const payload1 = new Uint8Array(kV2MaxPayload).fill(0x61); // 'a'
+  const payload1 = new Uint8Array(kMaxPayload).fill(0x61); // 'a'
   const payload2 = new TextEncoder().encode('{}');
 
   hp.onFrame({ type: kFrameType.CHUNK, transferId, seq: 0, payload: payload1 });
@@ -360,7 +360,7 @@ test('RX 14: new transfer replaces partial', async () => {
   hp.onMessage((msg) => messages.push(msg));
 
   // Start transfer A with a full chunk (not complete)
-  hp.onFrame({ type: kFrameType.CHUNK, transferId: 600, seq: 0, payload: new Uint8Array(kV2MaxPayload).fill(0x62) });
+  hp.onFrame({ type: kFrameType.CHUNK, transferId: 600, seq: 0, payload: new Uint8Array(kMaxPayload).fill(0x62) });
   assert.equal(messages.length, 0);
 
   // Start transfer B — replaces A
@@ -417,7 +417,7 @@ test('Reset 17: reset() clears RX → new transfer works', async () => {
   hp.onMessage((msg) => messages.push(msg));
 
   // Partial RX
-  hp.onFrame({ type: kFrameType.CHUNK, transferId: 700, seq: 0, payload: new Uint8Array(kV2MaxPayload).fill(0x63) });
+  hp.onFrame({ type: kFrameType.CHUNK, transferId: 700, seq: 0, payload: new Uint8Array(kMaxPayload).fill(0x63) });
   assert.equal(messages.length, 0);
 
   await hp.reset();
@@ -445,7 +445,7 @@ test('Reset 18: incoming reset clears all', async () => {
   await wait(20);
 
   // Partial RX
-  hp.onFrame({ type: kFrameType.CHUNK, transferId: 800, seq: 0, payload: new Uint8Array(kV2MaxPayload).fill(0x64) });
+  hp.onFrame({ type: kFrameType.CHUNK, transferId: 800, seq: 0, payload: new Uint8Array(kMaxPayload).fill(0x64) });
 
   // Incoming RESET
   simulateReset(hp);

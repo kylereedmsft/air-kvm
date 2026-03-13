@@ -1,17 +1,17 @@
 // Half-pipe transport (shared between MCP and extension).
 //
-// Provides send(obj) / onMessage(cb) over AK v2 binary frame protocol.
+// Provides send(obj) / onMessage(cb) over AK binary frame protocol.
 // TX: serialize → chunk ≤255 bytes → send with ACK gating.
 // RX: receive chunks via onFrame() → reassemble → JSON.parse → deliver.
 
 import {
   kFrameType,
-  kV2MaxPayload,
+  kMaxPayload,
   encodeChunkFrame,
   encodeAckFrame,
   encodeNackFrame,
   encodeResetFrame,
-  makeV2TransferId,
+  makeTransferId,
 } from './binary_frame.js';
 
 const kDefaultAckTimeoutMs = 3000;
@@ -114,7 +114,7 @@ export class HalfPipe {
   }
 
   /**
-   * Feed a decoded AK v2 frame. Called by transport layer.
+   * Feed a decoded AK frame. Called by transport layer.
    * @param {{ type: number, transferId: number, seq: number, payload: Uint8Array }} frame
    */
   onFrame(frame) {
@@ -167,7 +167,7 @@ export class HalfPipe {
 
     const json = JSON.stringify(obj);
     const bytes = toUtf8(json);
-    const transferId = makeV2TransferId();
+    const transferId = makeTransferId();
     const chunks = this._splitChunks(bytes);
 
     this._debug(`TX start tid=${transferId} chunks=${chunks.length} bytes=${bytes.length}`);
@@ -185,11 +185,11 @@ export class HalfPipe {
       chunks.push(new Uint8Array(0));
       return chunks;
     }
-    for (let off = 0; off < bytes.length; off += kV2MaxPayload) {
-      chunks.push(bytes.slice(off, off + kV2MaxPayload));
+    for (let off = 0; off < bytes.length; off += kMaxPayload) {
+      chunks.push(bytes.slice(off, off + kMaxPayload));
     }
-    // If last chunk is exactly kV2MaxPayload, append zero-length terminator
-    if (chunks[chunks.length - 1].length === kV2MaxPayload) {
+    // If last chunk is exactly kMaxPayload, append zero-length terminator
+    if (chunks[chunks.length - 1].length === kMaxPayload) {
       chunks.push(new Uint8Array(0));
     }
     return chunks;
@@ -286,8 +286,8 @@ export class HalfPipe {
     this._rx.nextSeq = seq + 1;
     this._sendAck(transferId, seq);
 
-    // Check for end-of-transfer: payload.length < kV2MaxPayload
-    if (payload.length < kV2MaxPayload) {
+    // Check for end-of-transfer: payload.length < kMaxPayload
+    if (payload.length < kMaxPayload) {
       this._reassembleAndDeliver();
     }
   }

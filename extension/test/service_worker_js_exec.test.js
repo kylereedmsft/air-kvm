@@ -4,8 +4,8 @@ import {
   encodeAckFrame,
   encodeChunkFrame,
   decodeFrame,
-  kV2MaxPayload,
-  makeV2TransferId,
+  kMaxPayload,
+  makeTransferId,
 } from '../../shared/binary_frame.js';
 
 const kTrustedSender = {
@@ -111,8 +111,8 @@ function makeHarness() {
                 const key = decoded.transferId;
                 if (!chunkBuffers[key]) chunkBuffers[key] = [];
                 chunkBuffers[key].push(decoded.payload);
-                // If last chunk (payload < kV2MaxPayload), reassemble and push to postedPayloads
-                if (decoded.payload.length < kV2MaxPayload) {
+                // If last chunk (payload < kMaxPayload), reassemble and push to postedPayloads
+                if (decoded.payload.length < kMaxPayload) {
                   const total = chunkBuffers[key].reduce((s, c) => s + c.length, 0);
                   const assembled = new Uint8Array(total);
                   let off = 0;
@@ -355,16 +355,16 @@ function findBleCommandListener(runtimeListeners, harness = null) {
   return listener;
 }
 
-// Send a JSON command to the service worker as v2 binary CHUNK frames via __ble_raw_bytes.
-async function sendV2Command(listener, command) {
+// Send a JSON command to the service worker as binary CHUNK frames via __ble_raw_bytes.
+async function sendCommand(listener, command) {
   const json = JSON.stringify(command);
   const bytes = new TextEncoder().encode(json);
-  const transferId = makeV2TransferId();
+  const transferId = makeTransferId();
   const chunks = [];
-  for (let off = 0; off < bytes.length; off += kV2MaxPayload) {
-    chunks.push(bytes.slice(off, off + kV2MaxPayload));
+  for (let off = 0; off < bytes.length; off += kMaxPayload) {
+    chunks.push(bytes.slice(off, off + kMaxPayload));
   }
-  if (chunks.length > 0 && chunks[chunks.length - 1].length === kV2MaxPayload) {
+  if (chunks.length > 0 && chunks[chunks.length - 1].length === kMaxPayload) {
     chunks.push(new Uint8Array(0));
   }
   if (chunks.length === 0) {
@@ -410,7 +410,7 @@ test('service worker handles js.exec.request and posts js.exec.result via bridge
   assert.equal(resultPayload.truncated, false);
 });
 
-test('service worker handles js.exec.request delivered via v2 half-pipe chunks', async () => {
+test('service worker handles js.exec.request delivered via half-pipe chunks', async () => {
   const harness = makeHarness();
   await importServiceWorkerFresh();
   const listener = findBleCommandListener(harness.runtimeListeners, harness);
@@ -422,8 +422,8 @@ test('service worker handles js.exec.request delivered via v2 half-pipe chunks',
     max_result_chars: 200
   };
 
-  // Single-transfer v2 chunk delivery via __ble_raw_bytes
-  await sendV2Command(listener, command);
+  // Single-transfer chunk delivery via __ble_raw_bytes
+  await sendCommand(listener, command);
 
   await waitFor(() => harness.postedPayloads.find((entry) => (
     entry?.type === 'js.exec.result' && entry?.request_id === 'js-xfer-1'
@@ -434,7 +434,7 @@ test('service worker handles js.exec.request delivered via v2 half-pipe chunks',
   assert.equal(payload?.type, 'js.exec.result');
 });
 
-test('service worker emits v2 ACK frames while receiving v2 CHUNK frames', async () => {
+test('service worker emits ACK frames while receiving CHUNK frames', async () => {
   const harness = makeHarness();
   await importServiceWorkerFresh();
   const listener = findBleCommandListener(harness.runtimeListeners, harness);
@@ -447,10 +447,10 @@ test('service worker emits v2 ACK frames while receiving v2 CHUNK frames', async
   };
   const json = JSON.stringify(command);
   const bytes = new TextEncoder().encode(json);
-  const transferId = makeV2TransferId();
+  const transferId = makeTransferId();
   const mid = Math.floor(bytes.length / 2);
 
-  // Send two v2 CHUNK frames
+  // Send two CHUNK frames
   const frame0 = encodeChunkFrame({ transferId, seq: 0, payload: bytes.slice(0, mid) });
   await callBleCommand(listener, { type: '__ble_raw_bytes', bytes: Array.from(frame0) });
   const frame1 = encodeChunkFrame({ transferId, seq: 1, payload: bytes.slice(mid) });
@@ -464,11 +464,11 @@ test('service worker emits v2 ACK frames while receiving v2 CHUNK frames', async
   assert.equal(ackFrames[0].transferId, transferId);
 });
 
-test('service worker handles v2 half-pipe with multi-chunk reassembly and dispatches command', async () => {
+test('service worker handles half-pipe with multi-chunk reassembly and dispatches command', async () => {
   const harness = makeHarness();
   await importServiceWorkerFresh();
   const listener = findBleCommandListener(harness.runtimeListeners, harness);
-  // Build a command large enough to span multiple 255-byte v2 chunks
+  // Build a command large enough to span multiple 255-byte chunks
   const command = {
     type: 'js.exec.request',
     request_id: 'js-multi-1',
@@ -477,8 +477,8 @@ test('service worker handles v2 half-pipe with multi-chunk reassembly and dispat
     max_result_chars: 200
   };
 
-  // sendV2Command splits into proper kV2MaxPayload-sized chunks
-  await sendV2Command(listener, command);
+  // sendCommand splits into proper kMaxPayload-sized chunks
+  await sendCommand(listener, command);
 
   await waitFor(() => harness.postedPayloads.find((entry) => (
     entry?.type === 'js.exec.result' && entry?.request_id === 'js-multi-1'
