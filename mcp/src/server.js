@@ -3,14 +3,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  buildCommandForTool,
-  isControlTool,
+  getTool,
   listTools,
+  validateArgs
 } from './protocol.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const kTempDir = path.resolve(__dirname, '../../temp');
+const kTempDir = path.resolve(__dirname, '../../temp'); // TODO: parameter
 
 function makeToolResultText(text) {
   return { content: [{ type: 'text', text }] };
@@ -95,26 +95,29 @@ export function createServer({ transport, send }) {
 
   function onToolCall(id, params) {
     const name = params?.name;
-    let command;
-    try {
-      command = buildCommandForTool(name, params?.arguments || {});
-    } catch (err) {
+    const tool = getTool(name);
+
+    if (!tool) {
+      send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Unknown tool' } });
+      return;
+    }
+
+    const args = params?.arguments || {};
+    const validation = validateArgs(tool, args);
+    if (!validation.ok) {
       send({
         jsonrpc: '2.0',
         id,
-        result: makeToolResultText(`invalid arguments: ${err.message}`),
+        result: makeToolResultText(`invalid arguments: ${validation.error}`),
         isError: true
       });
       return;
     }
 
-    if (command === null) {
-      send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'Unknown tool' } });
-      return;
-    }
+    const command = tool.build(args);
 
     // Firmware-local control commands (HID, state, fw ops)
-    if (isControlTool(name)) {
+    if (tool.control) {
       transport.sendControlCommand(command).then((result) => {
         const isExplicitRejection = result?.msg && result.ok === false;
         if (isExplicitRejection) {

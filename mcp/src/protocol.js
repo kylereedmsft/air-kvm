@@ -1,5 +1,25 @@
 import { SCREENSHOT_CONTRACT } from '../../shared/screenshot_contract.js';
 
+export function makeRequestId() {
+  return `req_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
+}
+
+function reqId(args) {
+  return typeof args?.request_id === 'string' && args.request_id.length > 0
+    ? args.request_id
+    : makeRequestId();
+}
+
+function screenshotOpts(args) {
+  const opts = { encoding: SCREENSHOT_CONTRACT.encoding };
+  if (Number.isInteger(args?.max_width)) opts.max_width = args.max_width;
+  if (Number.isInteger(args?.max_height)) opts.max_height = args.max_height;
+  if (typeof args?.quality === 'number') opts.quality = args.quality;
+  if (Number.isInteger(args?.max_chars)) opts.max_chars = args.max_chars;
+  if (Number.isInteger(args?.tab_id)) opts.tab_id = args.tab_id;
+  return opts;
+}
+
 const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_send',
@@ -10,14 +30,13 @@ const TOOL_DEFINITIONS = [
       properties: {
         command: {
           type: 'object',
-          properties: {
-            type: { type: 'string' }
-          },
+          properties: { type: { type: 'string' } },
           required: ['type']
         }
       },
       required: ['command']
-    }
+    },
+    build: (args) => args.command
   },
   {
     name: 'airkvm_mouse_move_rel',
@@ -30,7 +49,8 @@ const TOOL_DEFINITIONS = [
         dy: { type: 'integer' }
       },
       required: ['dx', 'dy']
-    }
+    },
+    build: (args) => ({ type: 'mouse.move_rel', dx: args.dx, dy: args.dy })
   },
   {
     name: 'airkvm_mouse_move_abs',
@@ -43,7 +63,8 @@ const TOOL_DEFINITIONS = [
         y: { type: 'integer' }
       },
       required: ['x', 'y']
-    }
+    },
+    build: (args) => ({ type: 'mouse.move_abs', x: args.x, y: args.y })
   },
   {
     name: 'airkvm_mouse_click',
@@ -55,7 +76,8 @@ const TOOL_DEFINITIONS = [
         button: { type: 'string' }
       },
       required: ['button']
-    }
+    },
+    build: (args) => ({ type: 'mouse.click', button: args.button })
   },
   {
     name: 'airkvm_key_tap',
@@ -67,7 +89,8 @@ const TOOL_DEFINITIONS = [
         key: { type: 'string' }
       },
       required: ['key']
-    }
+    },
+    build: (args) => ({ type: 'key.tap', key: args.key })
   },
   {
     name: 'airkvm_key_type',
@@ -79,13 +102,15 @@ const TOOL_DEFINITIONS = [
         text: { type: 'string', minLength: 1, maxLength: 128 }
       },
       required: ['text']
-    }
+    },
+    build: (args) => ({ type: 'key.type', text: args.text })
   },
   {
     name: 'airkvm_state_request',
     control: true,
     description: 'Request the current device state from the AirKVM firmware.',
-    inputSchema: { type: 'object', properties: {}, required: [] }
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    build: () => ({ type: 'state.request' })
   },
   {
     name: 'airkvm_state_set',
@@ -97,19 +122,22 @@ const TOOL_DEFINITIONS = [
         busy: { type: 'boolean' }
       },
       required: ['busy']
-    }
+    },
+    build: (args) => ({ type: 'state.set', busy: args.busy })
   },
   {
     name: 'airkvm_fw_version_request',
     control: true,
     description: 'Request the firmware version from the AirKVM device.',
-    inputSchema: { type: 'object', properties: {}, required: [] }
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    build: () => ({ type: 'fw.version.request' })
   },
   {
     name: 'airkvm_transfer_reset',
     control: true,
     description: 'Reset the BLE transfer state on the AirKVM device.',
-    inputSchema: { type: 'object', properties: {}, required: [] }
+    inputSchema: { type: 'object', properties: {}, required: [] },
+    build: () => ({ type: 'transfer.reset' })
   },
   {
     name: 'airkvm_list_tabs',
@@ -120,7 +148,8 @@ const TOOL_DEFINITIONS = [
         request_id: { type: 'string' }
       },
       required: []
-    }
+    },
+    build: (args) => ({ type: 'tabs.list.request', request_id: reqId(args) })
   },
   {
     name: 'airkvm_window_bounds',
@@ -132,6 +161,11 @@ const TOOL_DEFINITIONS = [
         tab_id: { type: 'integer' }
       },
       required: []
+    },
+    build: (args) => {
+      const command = { type: 'window.bounds.request', request_id: reqId(args) };
+      if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
+      return command;
     }
   },
   {
@@ -145,7 +179,8 @@ const TOOL_DEFINITIONS = [
         active: { type: 'boolean' }
       },
       required: ['request_id', 'url']
-    }
+    },
+    build: (args) => ({ type: 'tab.open.request', request_id: reqId(args), url: args.url, active: args.active ?? true })
   },
   {
     name: 'airkvm_dom_snapshot',
@@ -156,7 +191,8 @@ const TOOL_DEFINITIONS = [
         request_id: { type: 'string' }
       },
       required: []
-    }
+    },
+    build: (args) => ({ type: 'dom.snapshot.request', request_id: reqId(args) })
   },
   {
     name: 'airkvm_exec_js_tab',
@@ -171,6 +207,13 @@ const TOOL_DEFINITIONS = [
         max_result_chars: { type: 'integer', minimum: 64, maximum: 700 }
       },
       required: ['request_id', 'script']
+    },
+    build: (args) => {
+      const command = { type: 'js.exec.request', request_id: reqId(args), script: args.script };
+      if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
+      if (Number.isInteger(args?.timeout_ms)) command.timeout_ms = args.timeout_ms;
+      if (Number.isInteger(args?.max_result_chars)) command.max_result_chars = args.max_result_chars;
+      return command;
     }
   },
   {
@@ -188,7 +231,8 @@ const TOOL_DEFINITIONS = [
         encoding: { type: 'string', enum: [SCREENSHOT_CONTRACT.encoding] }
       },
       required: []
-    }
+    },
+    build: (args) => ({ type: 'screenshot.request', source: 'tab', request_id: reqId(args), ...screenshotOpts(args) })
   },
   {
     name: 'airkvm_screenshot_desktop',
@@ -209,22 +253,24 @@ const TOOL_DEFINITIONS = [
         encoding: { type: 'string', enum: [SCREENSHOT_CONTRACT.encoding] }
       },
       required: []
+    },
+    build: (args) => {
+      const command = { type: 'screenshot.request', source: 'desktop', request_id: reqId(args), ...screenshotOpts(args) };
+      if (Number.isInteger(args?.desktop_delay_ms)) command.desktop_delay_ms = args.desktop_delay_ms;
+      return command;
     }
   }
 ];
 
-export function isControlTool(name) {
-  return TOOL_DEFINITIONS.find((t) => t.name === name)?.control === true;
+export function getTool(name) {
+  return TOOL_DEFINITIONS.find((t) => t.name === name) ?? null;
 }
 
 export function listTools() {
   return TOOL_DEFINITIONS.map(({ name, description, inputSchema }) => ({ name, description, inputSchema }));
 }
 
-export function validateToolArgs(name, args) {
-  const tool = TOOL_DEFINITIONS.find((t) => t.name === name);
-  if (!tool) return { ok: false, error: 'unknown_tool' };
-
+export function validateArgs(tool, args) {
   const schema = tool.inputSchema;
   const props = schema.properties || {};
   const required = schema.required || [];
@@ -260,69 +306,4 @@ export function validateToolArgs(name, args) {
   }
 
   return { ok: true };
-}
-
-function buildScreenshotOpts(args) {
-  const opts = { encoding: SCREENSHOT_CONTRACT.encoding };
-  if (Number.isInteger(args?.max_width)) opts.max_width = args.max_width;
-  if (Number.isInteger(args?.max_height)) opts.max_height = args.max_height;
-  if (typeof args?.quality === 'number') opts.quality = args.quality;
-  if (Number.isInteger(args?.max_chars)) opts.max_chars = args.max_chars;
-  if (Number.isInteger(args?.tab_id)) opts.tab_id = args.tab_id;
-  return opts;
-}
-
-export function makeRequestId() {
-  return `req_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
-}
-
-export function buildCommandForTool(name, args = {}) {
-  const validation = validateToolArgs(name, args);
-  if (!validation.ok && validation.error !== 'unknown_tool') {
-    throw new Error(validation.error);
-  }
-
-  if (name === 'airkvm_send') return args?.command;
-  if (name === 'airkvm_mouse_move_rel') return { type: 'mouse.move_rel', dx: args.dx, dy: args.dy };
-  if (name === 'airkvm_mouse_move_abs') return { type: 'mouse.move_abs', x: args.x, y: args.y };
-  if (name === 'airkvm_mouse_click') return { type: 'mouse.click', button: args.button };
-  if (name === 'airkvm_key_tap') return { type: 'key.tap', key: args.key };
-  if (name === 'airkvm_key_type') return { type: 'key.type', text: args.text };
-  if (name === 'airkvm_state_request') return { type: 'state.request' };
-  if (name === 'airkvm_state_set') return { type: 'state.set', busy: args.busy };
-  if (name === 'airkvm_fw_version_request') return { type: 'fw.version.request' };
-  if (name === 'airkvm_transfer_reset') return { type: 'transfer.reset' };
-
-  const requestId =
-    typeof args?.request_id === 'string' && args.request_id.length > 0
-      ? args.request_id
-      : makeRequestId();
-
-  if (name === 'airkvm_list_tabs') return { type: 'tabs.list.request', request_id: requestId };
-  if (name === 'airkvm_window_bounds') {
-    const command = { type: 'window.bounds.request', request_id: requestId };
-    if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
-    return command;
-  }
-  if (name === 'airkvm_open_tab') {
-    return { type: 'tab.open.request', request_id: requestId, url: args.url, active: args.active ?? true };
-  }
-  if (name === 'airkvm_dom_snapshot') return { type: 'dom.snapshot.request', request_id: requestId };
-  if (name === 'airkvm_exec_js_tab') {
-    const command = { type: 'js.exec.request', request_id: requestId, script: args.script };
-    if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
-    if (Number.isInteger(args?.timeout_ms)) command.timeout_ms = args.timeout_ms;
-    if (Number.isInteger(args?.max_result_chars)) command.max_result_chars = args.max_result_chars;
-    return command;
-  }
-  if (name === 'airkvm_screenshot_tab') {
-    return { type: 'screenshot.request', source: 'tab', request_id: requestId, ...buildScreenshotOpts(args) };
-  }
-  if (name === 'airkvm_screenshot_desktop') {
-    const command = { type: 'screenshot.request', source: 'desktop', request_id: requestId, ...buildScreenshotOpts(args) };
-    if (Number.isInteger(args?.desktop_delay_ms)) command.desktop_delay_ms = args.desktop_delay_ms;
-    return command;
-  }
-
-  return null;
 }
