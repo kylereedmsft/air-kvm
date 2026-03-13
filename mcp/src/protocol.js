@@ -1,4 +1,4 @@
-import { SCREENSHOT_CONTRACT } from './screenshot_contract.js';
+import { SCREENSHOT_CONTRACT } from '../../shared/screenshot_contract.js';
 
 const TOOL_DEFINITIONS = [
   {
