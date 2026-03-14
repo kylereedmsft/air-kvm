@@ -358,16 +358,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
   if (msg.target === 'ble-page') return;
-  if (msg.type !== 'busy.changed' && msg.type !== 'dom.summary') {
+  if (msg.type !== 'busy.changed') {
     debugLog('ignoring non-bridge content message', { type: msg.type });
     return;
   }
-  debugLog('runtime message from content', { type: msg.type, tabId: sender?.tab?.id ?? null });
+  debugLog('busy.changed from content', { busy: msg.busy, tabId: sender?.tab?.id ?? null });
   if (Number.isInteger(sender?.tab?.id)) {
     lastAutomationTabId = sender.tab.id;
   }
 
-  sendViaHalfPipe({ ...msg, tabId: sender?.tab?.id ?? null })
+  // Translate busy.changed into a firmware state.set command.
+  sendViaHalfPipe({ type: 'state.set', busy: Boolean(msg.busy) })
     .then(() => sendResponse({ ok: true }))
     .catch(() => sendResponse({ ok: false }));
   return true;
@@ -1130,12 +1131,6 @@ chrome.action.onClicked.addListener(async (tab) => {
   try {
     await ensureBleBridgePage();
     setBadge('TAB', '#9E9E9E');
-    if (!tab.id) {
-      clearBadgeLater();
-      return;
-    }
-    const summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
-    await sendViaHalfPipe({ ...summary, tabId: tab.id });
     clearBadgeLater();
   } catch {
     setBadge('ERR', '#D93025');

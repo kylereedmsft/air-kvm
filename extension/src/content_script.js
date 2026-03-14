@@ -1,7 +1,7 @@
-// Content script: injected into every browser tab. Builds and sends a DOM summary
-// (title, URL, active element, actionable elements) to the service worker on request,
-// and tracks/reports busy state when the tab is mid-automation.
-import { buildDomSummary, busyEvent } from './messages.js';
+// Content script: injected into every browser tab. Tracks and reports busy state
+// (DOM mutation activity) to the service worker, which translates it into a
+// firmware state.set command so the controller knows when the page is settling.
+import { busyEvent } from './messages.js';
 
 let busy = false;
 let pendingTimer = null;
@@ -36,10 +36,6 @@ observer.observe(document.documentElement, {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg?.type === 'request.dom.summary') {
-    sendResponse(buildDomSummary(document, window.location.href));
-    return true;
-  }
   if (msg?.type === 'request.busy') {
     sendResponse(busyEvent(busy));
     return true;
