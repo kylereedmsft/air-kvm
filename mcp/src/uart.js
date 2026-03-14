@@ -1,5 +1,5 @@
 import { SerialPort } from 'serialport';
-import { kMagic0, kMagic1, tryExtractFrame, encodeControlFrame } from '../../shared/binary_frame.js';
+import { kTarget } from '../../shared/binary_frame.js';
 import { HalfPipe } from '../../shared/halfpipe.js';
 
 export class UartTransport {
@@ -14,7 +14,6 @@ export class UartTransport {
     this.commandTimeoutMs = commandTimeoutMs;
     this.debug = debug;
     this.serialPort = null;
-    this.readBuffer = Buffer.alloc(0);
     this.opened = false;
     this.halfpipe = null;
   }
@@ -37,7 +36,6 @@ export class UartTransport {
       });
     });
 
-    this.serialPort.on('data', (chunk) => this.onData(chunk));
     this.serialPort.on('error', (error) => {
       this.log(`serial error: ${error?.message || error}`);
     });
@@ -53,9 +51,14 @@ export class UartTransport {
             });
           });
         },
+        ackTarget: kTarget.EXTENSION,
         log: (msg) => this.log(`[halfpipe] ${msg}`),
       });
     }
+
+    this.serialPort.on('data', (chunk) => {
+      this.halfpipe.feedBytes(chunk);
+    });
   }
 
   log(msg) {
@@ -63,62 +66,19 @@ export class UartTransport {
     process.stderr.write(`[uart] ${msg}\n`);
   }
 
-  shouldResolveForCommand(command, msg) {
-    if (!msg || typeof msg !== 'object') return false;
-    if (typeof msg.ok === 'boolean') return true;
-
-    if (command?.type === 'state.request' && msg.type === 'state' && typeof msg.busy === 'boolean') {
-      return true;
-    }
-    if (command?.type === 'fw.version.request' && msg.type === 'fw.version' && typeof msg.version === 'string') {
-      return true;
-    }
-    return false;
-  }
-
-  onData(chunk) {
-    const incoming = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    this.readBuffer = Buffer.concat([this.readBuffer, incoming]);
-    while (this.readBuffer.length > 0) {
-      if (this.readBuffer[0] !== kMagic0) {
-        const nextMagic = this.readBuffer.indexOf(kMagic0, 1);
-        if (nextMagic === -1) { this.readBuffer = Buffer.alloc(0); break; }
-        this.readBuffer = this.readBuffer.subarray(nextMagic);
-        continue;
-      }
-      if (this.readBuffer.length < 2) break;
-      if (this.readBuffer[1] !== kMagic1) {
-        this.readBuffer = this.readBuffer.subarray(1);
-        continue;
-      }
-
-      const result = tryExtractFrame(this.readBuffer);
-      if (result && result.frame.type !== 'error') {
-        this.readBuffer = this.readBuffer.subarray(result.consumed);
-        if (this.halfpipe) {
-          this.halfpipe.onFrame(result.frame);
-        }
-        continue;
-      }
-
-      // Bad CRC or decode error — consume bytes, log, and continue
-      if (result) {
-        this.log(`frame error: ${result.frame.error}`);
-        this.readBuffer = this.readBuffer.subarray(result.consumed);
-        continue;
-      }
-
-      // Incomplete frame — wait for more data
-      break;
-    }
-  }
-
-  // Send a command via half-pipe and wait for the response message.
-  async sendRequest(command, { timeoutMs = 30000 } = {}) {
+  // Send a command and wait for the response.
+  // FW and HID tools → sendControl (single CONTROL frame, firmware handles locally, response via onControl).
+  // Extension tools → send (CHUNK frames relayed to extension over BLE, response via onMessage).
+  async send(command, tool, { timeoutMs = this.commandTimeoutMs } = {}) {
     await this.open();
+    const isLocal = tool.target === 'fw' || tool.target === 'hid';
+    const halfpipeTarget = tool.target === 'fw' ? kTarget.FW
+      : tool.target === 'hid' ? kTarget.HID
+      : kTarget.EXTENSION;
+
     return new Promise((resolve, reject) => {
-      let timer = null;
       let done = false;
+      let timer = null;
       const finish = (fn, val) => {
         if (done) return;
         done = true;
@@ -126,58 +86,34 @@ export class UartTransport {
         fn(val);
       };
 
-      const prevCb = this.halfpipe._messageHandler;
+      const prevCb = isLocal ? this.halfpipe._controlHandler : this.halfpipe._messageHandler;
+      const setHandler = isLocal
+        ? (cb) => this.halfpipe.onControl(cb)
+        : (cb) => this.halfpipe.onMessage(cb);
 
       timer = setTimeout(() => {
-        this.log(`sendRequest timeout command=${JSON.stringify(command)}`);
-        if (this.halfpipe) this.halfpipe.onMessage(prevCb);
+        this.log(`send timeout command=${JSON.stringify(command)}`);
+        if (this.halfpipe) setHandler(prevCb);
         finish(reject, new Error('device_timeout'));
       }, timeoutMs);
-      this.halfpipe.onMessage((msg) => {
-        finish(resolve, msg);
-        if (this.halfpipe) this.halfpipe.onMessage(prevCb);
+
+      setHandler((msg) => {
+        const matches = tool.matchResponse
+          ? tool.matchResponse(msg)
+          : typeof msg?.ok === 'boolean';
+        if (!isLocal || matches) {
+          setHandler(prevCb);
+          finish(resolve, isLocal ? { ok: msg?.ok !== false, msg } : msg);
+        }
       });
 
-      this.halfpipe.send(command).catch((err) => {
-        if (this.halfpipe) this.halfpipe.onMessage(prevCb);
+      const sendPromise = isLocal
+        ? this.halfpipe.sendControl(command, halfpipeTarget)
+        : this.halfpipe.send(command, halfpipeTarget);
+
+      sendPromise.catch((err) => {
+        if (this.halfpipe) setHandler(prevCb);
         finish(reject, err);
-      });
-    });
-  }
-
-  // Send a firmware-local command as an AK control frame.
-  async sendControlCommand(command, { timeoutMs = this.commandTimeoutMs } = {}) {
-    await this.open();
-    return new Promise((resolve, reject) => {
-      let timer = null;
-      let done = false;
-      const finish = (fn, val) => {
-        if (done) return;
-        done = true;
-        if (timer) clearTimeout(timer);
-        fn(val);
-      };
-
-      const prevCb = this.halfpipe._controlHandler;
-
-      timer = setTimeout(() => {
-        this.log('sendControlCommand timeout');
-        if (this.halfpipe) this.halfpipe.onControl(prevCb);
-        finish(reject, new Error('device_timeout'));
-      }, timeoutMs);
-      this.halfpipe.onControl((msg) => {
-        if (this.shouldResolveForCommand(command, msg)) {
-          if (this.halfpipe) this.halfpipe.onControl(prevCb);
-          finish(resolve, { ok: msg.ok !== false, msg });
-        }
-      });
-
-      const frameBytes = encodeControlFrame(command);
-      this.serialPort.write(frameBytes, (err) => {
-        if (err) { finish(reject, err); return; }
-        this.serialPort.drain((drainErr) => {
-          if (drainErr) finish(reject, drainErr);
-        });
       });
     });
   }
@@ -191,7 +127,6 @@ export class UartTransport {
       this.halfpipe = null;
     }
     this.serialPort = null;
-    this.readBuffer = Buffer.alloc(0);
     this.opened = false;
   }
 }

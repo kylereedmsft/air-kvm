@@ -115,72 +115,50 @@ export function createServer({ transport, send }) {
     }
 
     const command = tool.build(args);
-
-    // Firmware-local control commands (HID, state, fw ops)
-    if (tool.control) {
-      transport.sendControlCommand(command).then((result) => {
-        const isExplicitRejection = result?.msg && result.ok === false;
-        if (isExplicitRejection) {
-          send({
-            jsonrpc: '2.0',
-            id,
-            result: makeToolResultText(`device rejected ${JSON.stringify(command)}: ${JSON.stringify(result.msg)}`),
-            isError: true
-          });
-          return;
-        }
-        const isStateResponse = result?.msg?.type === 'state' && typeof result?.msg?.busy === 'boolean';
-        if (command.type === 'state.request' && isStateResponse) {
-          send({
-            jsonrpc: '2.0',
-            id,
-            result: makeToolResultText(`forwarded ${JSON.stringify(command)}; state=${JSON.stringify(result.msg)}`)
-          });
-          return;
-        }
-        send({ jsonrpc: '2.0', id, result: makeToolResultText(`forwarded ${JSON.stringify(command)}`) });
-      }).catch((err) => {
-        send({
-          jsonrpc: '2.0',
-          id,
-          result: makeToolResultText(`transport error: ${err.message}`),
-          isError: true
-        });
-      });
-      return;
-    }
-
-    // All other tools: bridge via half-pipe
     const timeoutMs = name === 'airkvm_dom_snapshot' ? 60000
       : (name === 'airkvm_screenshot_tab' || name === 'airkvm_screenshot_desktop') ? 30000
       : 30000;
 
-    transport.sendRequest(command, { timeoutMs }).then((msg) => {
-      if (!msg || msg.ok === false || msg.error) {
+    transport.send(command, tool, { timeoutMs }).then((msg) => {
+      // Local tools (fw/hid) return { ok, msg }; extension tools return msg directly.
+      const isLocal = tool.target === 'fw' || tool.target === 'hid';
+      const response = isLocal ? msg.msg : msg;
+      const ok = isLocal ? msg.ok : !(msg?.ok === false || msg?.error);
+
+      if (!ok) {
         send({
           jsonrpc: '2.0', id,
           result: makeToolResultJson({
             request_id: command.request_id || null,
-            error: msg?.error || 'device_error',
-            detail: msg
+            error: response?.error || 'device_error',
+            detail: response
           }),
           isError: true
         });
         return;
       }
 
+      // Local commands: return brief confirmation with any state payload.
+      if (isLocal) {
+        const detail = response?.type === 'state' || response?.type === 'fw.version'
+          ? `; response=${JSON.stringify(response)}`
+          : '';
+        send({ jsonrpc: '2.0', id, result: makeToolResultText(`forwarded ${JSON.stringify(command)}${detail}`) });
+        return;
+      }
+
       let data;
       if (name === 'airkvm_dom_snapshot') {
-        data = { request_id: command.request_id, snapshot: msg };
+        data = { request_id: command.request_id, snapshot: response };
       } else if (isScreenshotTool(name)) {
         data = {
           request_id: command.request_id,
-          source: msg.source || command.source,
-          mime: msg.mime || 'image/jpeg',
-          base64: msg.data || msg.base64 || '',
+          source: response.source || command.source,
+          mime: response.mime || 'image/jpeg',
+          base64: response.data || response.base64 || '',
         };
       } else {
-        data = msg;
+        data = response;
       }
 
       send({

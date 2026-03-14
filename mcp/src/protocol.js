@@ -23,7 +23,7 @@ function screenshotOpts(args) {
 const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_send',
-    control: true,
+    target: 'fw',
     description: 'Forward a raw control command to the AirKVM device transport.',
     inputSchema: {
       type: 'object',
@@ -40,7 +40,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_mouse_move_rel',
-    control: true,
+    target: 'hid',
     description: 'Move the mouse relative to its current position on the target machine.',
     inputSchema: {
       type: 'object',
@@ -54,7 +54,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_mouse_move_abs',
-    control: true,
+    target: 'hid',
     description: 'Move the mouse to an absolute screen position on the target machine.',
     inputSchema: {
       type: 'object',
@@ -68,7 +68,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_mouse_click',
-    control: true,
+    target: 'hid',
     description: 'Click a mouse button on the target machine.',
     inputSchema: {
       type: 'object',
@@ -81,7 +81,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_key_tap',
-    control: true,
+    target: 'hid',
     description: 'Tap a single keyboard key on the target machine.',
     inputSchema: {
       type: 'object',
@@ -94,7 +94,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_key_type',
-    control: true,
+    target: 'hid',
     description: 'Type a string of text on the target machine.',
     inputSchema: {
       type: 'object',
@@ -107,14 +107,15 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_state_request',
-    control: true,
+    target: 'fw',
     description: 'Request the current device state from the AirKVM firmware.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    build: () => ({ type: 'state.request' })
+    build: () => ({ type: 'state.request' }),
+    matchResponse: (msg) => msg?.type === 'state' && typeof msg.busy === 'boolean',
   },
   {
     name: 'airkvm_state_set',
-    control: true,
+    target: 'fw',
     description: 'Set the busy state on the AirKVM device.',
     inputSchema: {
       type: 'object',
@@ -127,20 +128,22 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_fw_version_request',
-    control: true,
+    target: 'fw',
     description: 'Request the firmware version from the AirKVM device.',
     inputSchema: { type: 'object', properties: {}, required: [] },
-    build: () => ({ type: 'fw.version.request' })
+    build: () => ({ type: 'fw.version.request' }),
+    matchResponse: (msg) => msg?.type === 'fw.version' && typeof msg.version === 'string',
   },
   {
     name: 'airkvm_transfer_reset',
-    control: true,
+    target: 'fw',
     description: 'Reset the BLE transfer state on the AirKVM device.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     build: () => ({ type: 'transfer.reset' })
   },
   {
     name: 'airkvm_list_tabs',
+    target: 'extension',
     description: 'List automatable browser tabs available on the target extension.',
     inputSchema: {
       type: 'object',
@@ -153,6 +156,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_window_bounds',
+    target: 'extension',
     description: 'Get browser window bounds in desktop coordinates for the target tab.',
     inputSchema: {
       type: 'object',
@@ -170,6 +174,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_open_tab',
+    target: 'extension',
     description: 'Open a new browser tab on the target extension machine.',
     inputSchema: {
       type: 'object',
@@ -184,6 +189,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_dom_snapshot',
+    target: 'extension',
     description: 'Request a DOM snapshot from the target extension over the AirKVM transport.',
     inputSchema: {
       type: 'object',
@@ -196,6 +202,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_exec_js_tab',
+    target: 'extension',
     description: 'Execute JavaScript in the target browser tab over the AirKVM transport.',
     inputSchema: {
       type: 'object',
@@ -218,6 +225,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_screenshot_tab',
+    target: 'extension',
     description: 'Request a tab screenshot from the target extension over the AirKVM transport.',
     inputSchema: {
       type: 'object',
@@ -236,6 +244,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'airkvm_screenshot_desktop',
+    target: 'extension',
     description: 'Request a desktop screenshot from the target extension over the AirKVM transport.',
     inputSchema: {
       type: 'object',

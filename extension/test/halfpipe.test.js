@@ -5,6 +5,7 @@ import {
   decodeFrame,
   kFrameType,
   kMaxPayload,
+  kTarget,
 } from '../../shared/binary_frame.js';
 
 // ---------------------------------------------------------------------------
@@ -62,10 +63,10 @@ function makeJsonOfSize(targetBytes) {
 
 test('TX 1: small message (single chunk)', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 , ackTarget: kTarget.MCP });
   const obj = { hello: 'world' };
 
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
   await wait(20);
 
   const decoded = decodeAll(frames);
@@ -80,11 +81,11 @@ test('TX 1: small message (single chunk)', async () => {
 
 test('TX 2: multi-chunk message', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 , ackTarget: kTarget.MCP });
 
   // ~600-byte payload → 3 chunks (255+255+90)
   const obj = { data: 'A'.repeat(580) };
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
 
   // ACK each chunk as it arrives
   for (let i = 0; i < 10; i += 1) {
@@ -107,7 +108,7 @@ test('TX 2: multi-chunk message', async () => {
 
 test('TX 3: exact multiple of 255 → terminator', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 , ackTarget: kTarget.MCP });
 
   // Build JSON payload of exactly 510 bytes
   const encoder = new TextEncoder();
@@ -121,7 +122,7 @@ test('TX 3: exact multiple of 255 → terminator', async () => {
   }
   assert.equal(encoder.encode(JSON.stringify(obj)).length, 510);
 
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
 
   // ACK chunks as they arrive (expect 3: 255+255+0)
   for (let i = 0; i < 10; i += 1) {
@@ -144,10 +145,10 @@ test('TX 3: exact multiple of 255 → terminator', async () => {
 
 test('TX 4: ack timeout + retry', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
 
   const obj = { retry: true };
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
 
   // Wait for timeout + re-send
   await wait(150);
@@ -163,11 +164,11 @@ test('TX 4: ack timeout + retry', async () => {
 
 test('TX 5: retries exhausted → reject', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 50, maxRetries: 2 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 50, maxRetries: 2 , ackTarget: kTarget.MCP });
 
   const obj = { fail: true };
   await assert.rejects(
-    () => hp.send(obj),
+    () => hp.send(obj, kTarget.EXTENSION),
     /chunk_send_failed:seq=0/
   );
 
@@ -179,10 +180,10 @@ test('TX 5: retries exhausted → reject', async () => {
 
 test('TX 6: nack triggers retry', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500, maxRetries: 3 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500, maxRetries: 3 , ackTarget: kTarget.MCP });
 
   const obj = { nack: true };
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
 
   await wait(20);
   let decoded = decodeAll(frames);
@@ -205,10 +206,10 @@ test('TX 6: nack triggers retry', async () => {
 
 test('TX 7: reset during send → rejects with stream_reset', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 , ackTarget: kTarget.MCP });
 
   const obj = { data: 'x'.repeat(300) };
-  const p = hp.send(obj);
+  const p = hp.send(obj, kTarget.EXTENSION);
 
   await wait(20);
   simulateReset(hp);
@@ -218,11 +219,11 @@ test('TX 7: reset during send → rejects with stream_reset', async () => {
 
 test('TX 8: send queue — second waits for first', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 , ackTarget: kTarget.MCP });
 
   const order = [];
-  const p1 = hp.send({ id: 1 }).then(() => order.push(1));
-  const p2 = hp.send({ id: 2 }).then(() => order.push(2));
+  const p1 = hp.send({ id: 1 }, kTarget.EXTENSION).then(() => order.push(1));
+  const p2 = hp.send({ id: 2 }, kTarget.EXTENSION).then(() => order.push(2));
 
   // ACK chunks as they arrive
   for (let i = 0; i < 20; i += 1) {
@@ -244,7 +245,7 @@ test('TX 8: send queue — second waits for first', async () => {
 
 test('RX 9: single chunk receive', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -260,7 +261,7 @@ test('RX 9: single chunk receive', async () => {
 
 test('RX 10: multi-chunk receive', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -286,7 +287,7 @@ test('RX 10: multi-chunk receive', async () => {
 
 test('RX 11: zero-length terminator', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -312,7 +313,7 @@ test('RX 11: zero-length terminator', async () => {
 
 test('RX 12: ACK sent for each chunk', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   hp.onMessage(() => {});
 
   const transferId = 400;
@@ -337,7 +338,7 @@ test('RX 12: ACK sent for each chunk', async () => {
 
 test('RX 13: wrong seq → NACK', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -355,7 +356,7 @@ test('RX 13: wrong seq → NACK', async () => {
 
 test('RX 14: new transfer replaces partial', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -381,7 +382,7 @@ test('RX 14: new transfer replaces partial', async () => {
 
 test('Reset 15: reset() sends reset frame', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
 
   await hp.reset();
 
@@ -392,16 +393,16 @@ test('Reset 15: reset() sends reset frame', async () => {
 
 test('Reset 16: reset() clears TX → rejects pending, new send works', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 , ackTarget: kTarget.MCP });
 
-  const p = hp.send({ big: 'x'.repeat(300) });
+  const p = hp.send({ big: 'x'.repeat(300) }, kTarget.EXTENSION);
   await wait(20);
 
   await hp.reset();
   await assert.rejects(p, /stream_reset/);
 
   // New send should work
-  const p2 = hp.send({ after: 'reset' });
+  const p2 = hp.send({ after: 'reset' }, kTarget.EXTENSION);
   await wait(20);
   const decoded = decodeAll(frames);
   const chunks = chunkFrames(decoded);
@@ -412,7 +413,7 @@ test('Reset 16: reset() clears TX → rejects pending, new send works', async ()
 
 test('Reset 17: reset() clears RX → new transfer works', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
@@ -436,12 +437,12 @@ test('Reset 17: reset() clears RX → new transfer works', async () => {
 
 test('Reset 18: incoming reset clears all', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 , ackTarget: kTarget.MCP });
   const messages = [];
   hp.onMessage((msg) => messages.push(msg));
 
   // Start TX
-  const p = hp.send({ data: 'x'.repeat(300) });
+  const p = hp.send({ data: 'x'.repeat(300) }, kTarget.EXTENSION);
   await wait(20);
 
   // Partial RX
@@ -470,7 +471,7 @@ test('Reset 18: incoming reset clears all', async () => {
 
 test('Control 19: control frame delivered', () => {
   const { writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const controls = [];
   hp.onControl((msg) => controls.push(msg));
 
@@ -488,7 +489,7 @@ test('Control 19: control frame delivered', () => {
 
 test('Log 20: log frame delivered', () => {
   const { writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn });
+  const hp = new HalfPipe({ writeFn , ackTarget: kTarget.MCP });
   const logs = [];
   hp.onLog((text) => logs.push(text));
 
@@ -509,9 +510,9 @@ test('Log 20: log frame delivered', () => {
 
 test('Edge 21: empty object', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 500 , ackTarget: kTarget.MCP });
 
-  const p = hp.send({});
+  const p = hp.send({}, kTarget.EXTENSION);
   await wait(20);
 
   const decoded = decodeAll(frames);
@@ -524,9 +525,9 @@ test('Edge 21: empty object', async () => {
 
 test('Edge 22: close() rejects pending with halfpipe_closed', async () => {
   const { frames, writeFn } = makeWriteCapture();
-  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 });
+  const hp = new HalfPipe({ writeFn, ackTimeoutMs: 5000 , ackTarget: kTarget.MCP });
 
-  const p = hp.send({ data: 'x'.repeat(300) });
+  const p = hp.send({ data: 'x'.repeat(300) }, kTarget.EXTENSION);
   await wait(20);
 
   hp.close();
@@ -534,5 +535,5 @@ test('Edge 22: close() rejects pending with halfpipe_closed', async () => {
   await assert.rejects(p, /halfpipe_closed/);
 
   // Further sends also rejected
-  await assert.rejects(() => hp.send({ after: 'close' }), /halfpipe_closed/);
+  await assert.rejects(() => hp.send({ after: 'close' }, kTarget.EXTENSION), /halfpipe_closed/);
 });

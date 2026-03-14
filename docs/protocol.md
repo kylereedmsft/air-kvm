@@ -1,23 +1,23 @@
-# Protocol (Current, March 12, 2026)
+# Protocol (Current, March 14, 2026)
 
 ## 1) Transport Overview
 
-AirKVM uses two independent transport segments bridged by the firmware:
+All communication between MCP, firmware, and the extension uses AK binary frames
+over two transport segments bridged by the firmware:
 
 1. **MCP ↔ Firmware** over UART (wired)
-   - All communication uses AK binary frames.
-   - **HID / firmware-local commands** (`airkvm_send`): MCP encodes the command as
-     a CONTROL frame (type `0x02`, JSON payload) and writes it directly to UART.
-     Firmware's command router handles it locally; response returns as a CONTROL frame.
-   - **Extension-bound commands** (all other tools): MCP sends the command through
-     the half-pipe transport as CHUNK frames (type `0x01`). Firmware forwards the
-     chunks to BLE; the extension's half-pipe reassembles them.
-
 2. **Extension ↔ Firmware** over BLE UART-style GATT (wireless)
-   - All communication uses AK binary frames.
-   - Large Extension→MCP payloads (screenshots, DOM snapshots) are sent as
-     AK CHUNK frames through the half-pipe transport.
-   - Firmware acks binary chunks back to the extension after forwarding to UART.
+
+**The only send path is HalfPipe.** No code writes raw frames to hardware directly.
+MCP and the extension each hold a `HalfPipe` instance; firmware is a dumb bridge that
+forwards frames between UART and BLE unchanged.
+
+Every frame carries a **routing target** in the upper 3 bits of the type byte (see §6.1).
+Firmware uses this to decide whether to handle the frame locally or forward it.
+
+- **`target=FW` or `target=HID` + CONTROL frame** → firmware handles locally
+  (`state.request`, `fw.version.request`, mouse/keyboard commands, etc.)
+- **Everything else** → forwarded to the other transport segment unchanged
 
 ## 2) BLE GATT Profile
 
@@ -96,9 +96,16 @@ about chunking, acking, or transport details.
 
 ### 5.1 Design Principles
 
-- **Simple API.** App layer sees only `send(obj)` and `onMessage(cb)`.
-- **One stream at a time.** Hardware can't support simultaneous streams. The
-  transport enforces serialization — one `send()` active at a time.
+- **Single send path.** All messages go through `HalfPipe`. No code writes raw
+  frames to hardware.
+- **Two send methods, separated by purpose.** `send(obj, target)` sends CHUNK
+  frames (ACK-gated, any size). `sendControl(obj, target)` sends a single CONTROL
+  frame (no ACK, ≤255 bytes JSON). The choice of method is orthogonal to the
+  routing target.
+- **Routing target.** Every frame carries a target in the type byte's upper 3 bits.
+  Firmware routes on this field; HalfPipe just encodes it.
+- **Serialized TX queue.** Concurrent `send()`/`sendControl()` calls are chained
+  on a promise queue — one at a time, never interleaved.
 - **No flooding.** One chunk in flight, wait for ack before sending next.
   Firmware never sees more than one chunk.
 - **Failure handling.** `send()` rejects on timeout, reset, or cancel. The
@@ -110,8 +117,10 @@ about chunking, acking, or transport details.
 
 ```
 MCP App                                Extension App
-  │ send(obj)                            │ send(obj)
-  │ onMessage(cb)                        │ onMessage(cb)
+  │ send(obj, target)                    │ send(obj, target)
+  │ sendControl(obj, target)             │ sendControl(obj, target)
+  │ onMessage(cb) / onControl(cb)        │ onMessage(cb) / onControl(cb)
+  │ feedBytes(bytes)                     │ feedBytes(bytes)
   ▼                                      ▼
 ┌──────────────┐                    ┌──────────────┐
 │  MCP Stream  │                    │  Ext Stream  │
@@ -124,6 +133,9 @@ MCP App                                Extension App
                  │  (bridge)   │
                  └─────────────┘
 ```
+
+`feedBytes(bytes)` replaces duplicated stream-parsing loops — callers pass raw
+bytes from their transport; HalfPipe owns all frame boundary detection.
 
 All chunks use AK binary frame format (see §6). No JSON `stream.data` envelopes,
 no base64 encoding overhead.
@@ -178,14 +190,15 @@ mid-transfer, with full TX queue, and with BLE disconnected.
 
 ## 6) AK Binary Frame Format
 
-### 6.1 Frame (current)
+### 6.1 Frame
 
 All transport segments (UART and BLE) use the same binary frame format.
 
 ```
 Offset  Size  Field
   0     2B    Magic (0x41 0x4B = "AK")
-  2     1B    Type
+  2     1B    Type byte  [ T T T | F F F F F ]
+                           target   frame type
   3     2B    Transfer ID (LE) — random tag per transfer
   5     2B    Seq (LE) — chunk sequence number, starts at 0
   7     1B    Len — payload byte count (0–255)
@@ -195,16 +208,36 @@ Offset  Size  Field
 
 **12 bytes overhead. Max frame size: 267 bytes.**
 
-Frame types:
+#### Type byte encoding
+
+The type byte encodes two orthogonal fields:
+
+- **Upper 3 bits (target):** routing destination
+- **Lower 5 bits (frame type):** payload shape
+
+| Target name | Value | Description |
+|-------------|-------|-------------|
+| `MCP`       | `1`   | Route to MCP |
+| `FW`        | `2`   | Handle locally in firmware |
+| `EXTENSION` | `3`   | Route to browser extension |
+| `HID`       | `4`   | Handle by HID subsystem in firmware |
+
+Any other value (including `0`) is invalid and will be NACKed.
+
+Frame types (lower 5 bits):
 
 | Type | Value | Payload | Purpose |
 |------|-------|---------|---------|
 | chunk | `0x01` | 0–255 bytes | Stream data chunk |
-| control | `0x02` | JSON text | App-layer control message (non-streamed) |
-| log | `0x03` | text | Diagnostic log |
+| control | `0x02` | JSON text, single frame only (≤255 bytes) | App-layer control message |
+| log | `0x03` | text | Diagnostic log (firmware → host only) |
 | ack | `0x04` | none | Chunk acknowledged (transfer_id + seq in header) |
 | nack | `0x05` | none | Chunk rejected (transfer_id + seq in header) |
 | reset | `0x06` | none | Hard clear all stream state |
+
+**CONTROL frames are single-frame only.** The JSON payload must fit in ≤255 bytes.
+There is no multi-frame reassembly for CONTROL; recipients process each frame as a
+complete, self-contained message. Use CHUNK frames for larger payloads.
 
 CRC scope: bytes 2 through end of payload (type + transfer_id + seq + len + payload).
 Excludes magic and CRC field itself.
@@ -240,19 +273,31 @@ v1 frames are no longer used and all v1 code has been removed.
 
 ## 7) MCP Tool Contract
 
-All tools that cross the BLE bridge use the half-pipe transport (`send`/`onMessage`).
-HID commands are handled locally by the firmware.
+All tools send through `HalfPipe`. The `target` field on each tool definition
+determines the routing target and which HalfPipe method is used.
 
-| Tool | Sends | Transport |
-|------|-------|-----------|
-| `airkvm_send` | raw command | firmware-local (HID) |
-| `airkvm_list_tabs` | `tabs.list.request` | half-pipe |
-| `airkvm_open_tab` | `tab.open.request` | half-pipe |
-| `airkvm_dom_snapshot` | `dom.snapshot.request` | half-pipe |
-| `airkvm_exec_js_tab` | `js.exec.request` | half-pipe |
-| `airkvm_window_bounds` | `window.bounds.request` | half-pipe |
-| `airkvm_screenshot_tab` | `screenshot.request` | half-pipe |
-| `airkvm_screenshot_desktop` | `screenshot.request` | half-pipe |
+- `target=fw` or `target=hid` → `halfpipe.sendControl()` (CONTROL frame, firmware handles locally)
+- `target=extension` → `halfpipe.send()` (CHUNK frames, forwarded to extension over BLE)
+
+| Tool | Sends | Target | Frame type |
+|------|-------|--------|-----------|
+| `airkvm_send` | raw command passthrough | `fw` | CONTROL |
+| `airkvm_mouse_move_rel` | `mouse.move_rel` | `hid` | CONTROL |
+| `airkvm_mouse_move_abs` | `mouse.move_abs` | `hid` | CONTROL |
+| `airkvm_mouse_click` | `mouse.click` | `hid` | CONTROL |
+| `airkvm_key_tap` | `key.tap` | `hid` | CONTROL |
+| `airkvm_key_type` | `key.type` | `hid` | CONTROL |
+| `airkvm_state_request` | `state.request` | `fw` | CONTROL |
+| `airkvm_state_set` | `state.set` | `fw` | CONTROL |
+| `airkvm_fw_version_request` | `fw.version.request` | `fw` | CONTROL |
+| `airkvm_transfer_reset` | reset | `fw` | RESET |
+| `airkvm_list_tabs` | `tabs.list.request` | `extension` | CHUNK |
+| `airkvm_window_bounds` | `window.bounds.request` | `extension` | CHUNK |
+| `airkvm_open_tab` | `tab.open.request` | `extension` | CHUNK |
+| `airkvm_dom_snapshot` | `dom.snapshot.request` | `extension` | CHUNK |
+| `airkvm_exec_js_tab` | `js.exec.request` | `extension` | CHUNK |
+| `airkvm_screenshot_tab` | `screenshot.request` | `extension` | CHUNK |
+| `airkvm_screenshot_desktop` | `screenshot.request` | `extension` | CHUNK |
 
 ## 8) HID Support
 

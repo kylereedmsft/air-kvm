@@ -14,12 +14,15 @@ class CommandRouter {
  public:
   CommandRouter(TransportMux& transport, DeviceState& state, HidController& hid);
 
-  // Handle a CONTROL frame from UART. Parses the JSON payload and dispatches
-  // to the appropriate firmware-local command handler.
-  void ProcessControlFrame(const AkFrame& frame);
+  // Handle a CONTROL frame targeting firmware (state, version, etc.).
+  void ProcessFwFrame(const AkFrame& frame);
+
+  // Handle a CONTROL frame targeting the HID subsystem (mouse, keyboard).
+  void ProcessHidFrame(const AkFrame& frame);
 
  private:
-  bool HandleCommand(const airkvm::Command& cmd);
+  bool HandleFwCommand(const airkvm::Command& cmd);
+  bool HandleHidCommand(const airkvm::Command& cmd);
 
   TransportMux& transport_;
   DeviceState& state_;

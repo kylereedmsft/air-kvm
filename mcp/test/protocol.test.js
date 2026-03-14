@@ -75,13 +75,17 @@ test('airkvm_transfer_reset build', () => {
   assert.deepEqual(getTool('airkvm_transfer_reset').build({}), { type: 'transfer.reset' });
 });
 
-test('control flag is set on HID and firmware tools only', () => {
-  for (const name of ['airkvm_send', 'airkvm_mouse_move_rel', 'airkvm_mouse_move_abs',
-    'airkvm_mouse_click', 'airkvm_key_tap', 'airkvm_key_type', 'airkvm_state_request',
-    'airkvm_state_set', 'airkvm_fw_version_request', 'airkvm_transfer_reset']) {
-    assert.equal(getTool(name).control, true, `expected ${name} to have control: true`);
+test('target is set correctly on all tools', () => {
+  for (const name of ['airkvm_send', 'airkvm_state_request', 'airkvm_state_set',
+    'airkvm_fw_version_request', 'airkvm_transfer_reset']) {
+    assert.equal(getTool(name).target, 'fw', `expected ${name} to have target: 'fw'`);
   }
-  for (const name of ['airkvm_list_tabs', 'airkvm_screenshot_tab', 'airkvm_screenshot_desktop']) {
-    assert.ok(!getTool(name).control, `expected ${name} to not have control flag`);
+  for (const name of ['airkvm_mouse_move_rel', 'airkvm_mouse_move_abs',
+    'airkvm_mouse_click', 'airkvm_key_tap', 'airkvm_key_type']) {
+    assert.equal(getTool(name).target, 'hid', `expected ${name} to have target: 'hid'`);
+  }
+  for (const name of ['airkvm_list_tabs', 'airkvm_screenshot_tab', 'airkvm_screenshot_desktop',
+    'airkvm_dom_snapshot', 'airkvm_exec_js_tab', 'airkvm_window_bounds', 'airkvm_open_tab']) {
+    assert.equal(getTool(name).target, 'extension', `expected ${name} to have target: 'extension'`);
   }
 });

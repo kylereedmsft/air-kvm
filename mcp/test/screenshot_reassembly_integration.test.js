@@ -3,12 +3,9 @@ import assert from 'node:assert/strict';
 
 import { createServer } from '../src/server.js';
 
-function makeHarness(sendRequestImpl) {
+function makeHarness(sendImpl) {
   const sent = [];
-  const transport = {
-    sendRequest: sendRequestImpl,
-    sendControlCommand: async () => ({ ok: true, msg: { ok: true } }),
-  };
+  const transport = { send: sendImpl };
   const server = createServer({
     transport,
     send: (msg) => sent.push(msg),
@@ -29,7 +26,7 @@ async function callScreenshotTool(server, requestId, extraArgs = {}) {
   await new Promise((resolve) => setTimeout(resolve, 50));
 }
 
-test('screenshot via sendRequest returns base64 payload', async () => {
+test('screenshot via transport.send returns base64 payload', async () => {
   const fakeBase64 = Buffer.from('fakeImageData').toString('base64');
   const { sent, server } = makeHarness(async () => ({
     type: 'screenshot.response',
@@ -47,7 +44,7 @@ test('screenshot via sendRequest returns base64 payload', async () => {
   assert.equal(payload.mime, 'image/jpeg');
 });
 
-test('screenshot sendRequest timeout surfaces as transport_error', async () => {
+test('screenshot transport timeout surfaces as transport_error', async () => {
   const { sent, server } = makeHarness(async () => {
     throw new Error('device_timeout');
   });
@@ -60,7 +57,7 @@ test('screenshot sendRequest timeout surfaces as transport_error', async () => {
   assert.equal(payload.detail, 'device_timeout');
 });
 
-test('screenshot.error via sendRequest is surfaced as structured tool error', async () => {
+test('screenshot.error is surfaced as structured tool error', async () => {
   const { sent, server } = makeHarness(async () => ({
     type: 'screenshot.error',
     request_id: 'shot-err-1',

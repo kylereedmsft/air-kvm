@@ -34,6 +34,19 @@ export function crc32(bytes) {
 // ============================================================
 // frame constants
 // ============================================================
+
+// Routing target — encoded in the upper 3 bits of the type byte.
+// Lower 5 bits carry the frame type.
+//
+// Type byte layout: [ T T T | F F F F F ]
+//                    target   frame type
+export const kTarget = {
+  MCP:       1,
+  FW:        2,
+  EXTENSION: 3,
+  HID:       4,
+};
+
 export const kFrameType = {
   CHUNK:   0x01,
   CONTROL: 0x02,
@@ -43,7 +56,20 @@ export const kFrameType = {
   RESET:   0x06,
 };
 
-const kValidTypes = new Set(Object.values(kFrameType));
+/** Encode a type byte combining routing target and frame type. */
+export function encodeTargetedType(target, frameType) {
+  return ((target & 0x7) << 5) | (frameType & 0x1f);
+}
+
+/** Decode a type byte into { frameType, target }. */
+export function decodeTargetedType(byte) {
+  return {
+    frameType: byte & 0x1f,
+    target: (byte >> 5) & 0x7,
+  };
+}
+
+const kValidFrameTypes = new Set(Object.values(kFrameType));
 
 export const kHeaderLen   = 8;  // magic(2) + type(1) + txid(2) + seq(2) + len(1)
 export const kCrcLen      = 4;
@@ -53,8 +79,8 @@ export const kMaxPayload  = 255;
 // ============================================================
 // frame encoder
 // ============================================================
-export function encodeFrame({ type, transferId, seq, payload }) {
-  if (!kValidTypes.has(type)) {
+export function encodeFrame({ type, target = kTarget.DEFAULT, transferId, seq, payload }) {
+  if (!kValidFrameTypes.has(type)) {
     throw new Error('bad_type');
   }
   if (!Number.isInteger(transferId) || transferId < 0 || transferId > 0xffff) {
@@ -77,7 +103,7 @@ export function encodeFrame({ type, transferId, seq, payload }) {
 
   out[0] = kMagic0;
   out[1] = kMagic1;
-  out[2] = type;
+  out[2] = encodeTargetedType(target, type);
   view.setUint16(3, transferId, true);
   view.setUint16(5, seq, true);
   out[7] = p.length;
@@ -101,9 +127,9 @@ export function decodeFrame(bytes) {
   if (bytes[0] !== kMagic0 || bytes[1] !== kMagic1) {
     return { ok: false, error: 'bad_magic' };
   }
-  const type = bytes[2];
-  if (!kValidTypes.has(type)) {
-    return { ok: false, error: 'bad_type', type };
+  const { frameType, target } = decodeTargetedType(bytes[2]);
+  if (!kValidFrameTypes.has(frameType)) {
+    return { ok: false, error: 'bad_type', type: frameType };
   }
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const transferId = view.getUint16(3, true);
@@ -112,7 +138,7 @@ export function decodeFrame(bytes) {
 
   const expectedLen = kHeaderLen + len + kCrcLen;
   if (bytes.length < expectedLen) {
-    return { ok: false, error: 'length_mismatch', type, transferId, seq, len };
+    return { ok: false, error: 'length_mismatch', type: frameType, transferId, seq, len };
   }
 
   const payload = bytes.slice(kHeaderLen, kHeaderLen + len);
@@ -122,10 +148,10 @@ export function decodeFrame(bytes) {
   const gotCrc = view.getUint32(kHeaderLen + len, true) >>> 0;
   const wantCrc = crc32(crcRegion);
   if (gotCrc !== wantCrc) {
-    return { ok: false, error: 'crc_mismatch', type, transferId, seq, gotCrc, wantCrc };
+    return { ok: false, error: 'crc_mismatch', type: frameType, transferId, seq, gotCrc, wantCrc };
   }
 
-  return { ok: true, type, transferId, seq, payload };
+  return { ok: true, type: frameType, target, transferId, seq, payload };
 }
 
 // ============================================================
@@ -154,7 +180,7 @@ export function tryExtractFrame(buffer) {
     return { frame: { type: 'error', error: result.error }, consumed: frameLen };
   }
   return {
-    frame: { type: result.type, transferId: result.transferId, seq: result.seq, payload: result.payload },
+    frame: { type: result.type, target: result.target, transferId: result.transferId, seq: result.seq, payload: result.payload },
     consumed: frameLen,
   };
 }
@@ -169,8 +195,8 @@ export function makeTransferId() {
 // ============================================================
 // convenience encoders
 // ============================================================
-export function encodeChunkFrame({ transferId, seq, payload }) {
-  return encodeFrame({ type: kFrameType.CHUNK, transferId, seq, payload });
+export function encodeChunkFrame({ transferId, seq, payload, target = kTarget.DEFAULT }) {
+  return encodeFrame({ type: kFrameType.CHUNK, target, transferId, seq, payload });
 }
 
 const _textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
@@ -188,9 +214,9 @@ function toUtf8(str) {
   return new Uint8Array(arr);
 }
 
-export function encodeControlFrame(msg) {
+export function encodeControlFrame(msg, target = kTarget.DEFAULT) {
   const payload = toUtf8(JSON.stringify(msg));
-  return encodeFrame({ type: kFrameType.CONTROL, transferId: 0, seq: 0, payload });
+  return encodeFrame({ type: kFrameType.CONTROL, target, transferId: 0, seq: 0, payload });
 }
 
 export function encodeLogFrame(text) {
@@ -198,16 +224,16 @@ export function encodeLogFrame(text) {
   return encodeFrame({ type: kFrameType.LOG, transferId: 0, seq: 0, payload });
 }
 
-export function encodeAckFrame({ transferId, seq }) {
-  return encodeFrame({ type: kFrameType.ACK, transferId, seq });
+export function encodeAckFrame({ transferId, seq, target }) {
+  return encodeFrame({ type: kFrameType.ACK, target, transferId, seq });
 }
 
-export function encodeNackFrame({ transferId, seq }) {
-  return encodeFrame({ type: kFrameType.NACK, transferId, seq });
+export function encodeNackFrame({ transferId, seq, target }) {
+  return encodeFrame({ type: kFrameType.NACK, target, transferId, seq });
 }
 
-export function encodeResetFrame({ transferId }) {
-  return encodeFrame({ type: kFrameType.RESET, transferId, seq: 0 });
+export function encodeResetFrame({ transferId, target }) {
+  return encodeFrame({ type: kFrameType.RESET, target, transferId, seq: 0 });
 }
 
 

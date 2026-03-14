@@ -1,6 +1,6 @@
 import { resolveScreenshotConfig } from './screenshot_protocol.js';
 import { HalfPipe } from '../../shared/halfpipe.js';
-import { tryExtractFrame, kMinFrameLen, kMagic0 } from '../../shared/binary_frame.js';
+import { kTarget } from '../../shared/binary_frame.js';
 const kBleBridgePagePath = 'ble_bridge.html';
 const kDebugDefault = false;
 const kDebugStorageKey = 'airkvmVerboseBridgeLog';
@@ -25,7 +25,6 @@ let lastAutomationTabId = null;
 let bridgeTraceSeq = 0;
 let jsExecInFlight = false;
 let halfpipe = null;
-let bleBinaryBuffer = new Uint8Array(0);
 const kSwInstanceId = `sw_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
 let debugEnabled = kDebugDefault;
 
@@ -386,7 +385,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     lastAutomationTabId = sender.tab.id;
   }
 
-  getHalfPipe().send({ ...msg, tabId: sender?.tab?.id ?? null })
+  getHalfPipe().send({ ...msg, tabId: sender?.tab?.id ?? null }, kTarget.MCP)
     .then(() => sendResponse({ ok: true }))
     .catch(() => sendResponse({ ok: false }));
   return true;
@@ -497,7 +496,7 @@ async function postJsExecError(requestId, tabId, startedAt, errorCode, message) 
     error_code: errorCode,
     error: clipText(message || errorCode),
     ts: Date.now()
-  });
+  }, kTarget.MCP);
 }
 
 async function sendJsExec(command) {
@@ -552,7 +551,7 @@ async function sendJsExec(command) {
       value_json: typeof result.value_json === 'string' ? result.value_json : 'null',
       truncated: Boolean(result.truncated),
       ts: Date.now()
-    });
+    }, kTarget.MCP);
   } catch (err) {
     const detail = String(err?.message || err);
     if (detail === 'js_exec_timeout') {
@@ -599,6 +598,7 @@ function getHalfPipe() {
     writeFn: async (frameBytes) => {
       await postBinaryOrThrow(frameBytes);
     },
+    ackTarget: kTarget.MCP,
     log: (msg) => debugLog('[halfpipe]', msg),
   });
 
@@ -628,33 +628,7 @@ function getHalfPipe() {
 
 function handleBleRawBytes(bytesArray) {
   if (!Array.isArray(bytesArray) || bytesArray.length === 0) return;
-  const incoming = new Uint8Array(bytesArray);
-
-  // Append to buffer
-  const combined = new Uint8Array(bleBinaryBuffer.length + incoming.length);
-  combined.set(bleBinaryBuffer);
-  combined.set(incoming, bleBinaryBuffer.length);
-  bleBinaryBuffer = combined;
-
-  // Extract complete frames
-  const hp = getHalfPipe();
-  while (bleBinaryBuffer.length >= kMinFrameLen) {
-    const result = tryExtractFrame(bleBinaryBuffer);
-    if (!result) {
-      // Scan forward to next AK magic byte rather than stalling on garbage
-      let next = -1;
-      for (let i = 1; i < bleBinaryBuffer.length; i++) {
-        if (bleBinaryBuffer[i] === kMagic0) { next = i; break; }
-      }
-      if (next === -1) { bleBinaryBuffer = new Uint8Array(0); break; }
-      bleBinaryBuffer = bleBinaryBuffer.slice(next);
-      continue;
-    }
-    bleBinaryBuffer = bleBinaryBuffer.slice(result.consumed);
-    if (result.frame.type !== 'error') {
-      hp.onFrame(result.frame);
-    }
-  }
+  getHalfPipe().feedBytes(new Uint8Array(bytesArray));
 }
 
 async function captureTabPng(config) {
@@ -870,7 +844,7 @@ async function sendDomSnapshot(command) {
     throw new Error('dom_snapshot_too_large');
   }
 
-  await getHalfPipe().send(snapshotPayload);
+  await getHalfPipe().send(snapshotPayload, kTarget.MCP);
 }
 
 async function sendScreenshot(command) {
@@ -918,7 +892,7 @@ async function sendScreenshot(command) {
     encoded_quality: encoded.encodedQuality,
     encode_attempts: encoded.attempts,
     ts: Date.now(),
-  });
+  }, kTarget.MCP);
 }
 
 async function sendTabsList(command) {
@@ -938,7 +912,7 @@ async function sendTabsList(command) {
     request_id: requestId,
     tabs: filtered,
     ts: Date.now()
-  });
+  }, kTarget.MCP);
 }
 
 async function sendOpenTab(command) {
@@ -966,7 +940,7 @@ async function sendOpenTab(command) {
     request_id: requestId,
     tab: normalizedTab,
     ts: Date.now()
-  });
+  }, kTarget.MCP);
 }
 
 function normalizeWindowBounds(bounds) {
@@ -1043,7 +1017,7 @@ async function sendWindowBounds(command) {
     window_id: targetInfo?.window_id ?? null,
     bounds: targetInfo?.bounds ?? null,
     ts: Date.now()
-  });
+  }, kTarget.MCP);
 }
 
 async function runBridgeHandler(command, label, handler, onError) {
@@ -1067,7 +1041,7 @@ const kBleCommandHandlers = {
         request_id: cmd.request_id || null,
         error: detail,
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   ),
   'screenshot.request': (command) => runBridgeHandler(
@@ -1081,7 +1055,7 @@ const kBleCommandHandlers = {
         source: cmd.source || 'tab',
         error: detail,
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   ),
   'tabs.list.request': (command) => runBridgeHandler(
@@ -1094,7 +1068,7 @@ const kBleCommandHandlers = {
         request_id: cmd.request_id || null,
         error: detail,
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   ),
   'window.bounds.request': (command) => runBridgeHandler(
@@ -1108,7 +1082,7 @@ const kBleCommandHandlers = {
         tab_id: Number.isInteger(cmd?.tab_id) ? cmd.tab_id : null,
         error: clipText(detail || 'window_bounds_failed'),
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   ),
   'tab.open.request': (command) => runBridgeHandler(
@@ -1121,7 +1095,7 @@ const kBleCommandHandlers = {
         request_id: cmd?.request_id || null,
         error: clipText(detail || 'tab_open_failed'),
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   ),
   'js.exec.request': (command) => runBridgeHandler(
@@ -1137,7 +1111,7 @@ const kBleCommandHandlers = {
         error_code: 'js_exec_failed',
         error: clipText(detail || 'js_exec_failed'),
         ts: Date.now()
-      });
+      }, kTarget.MCP);
     }
   )
 };
@@ -1165,7 +1139,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.command?.type === 'halfpipe.send') {
-    getHalfPipe().send(msg.command.payload)
+    getHalfPipe().send(msg.command.payload, kTarget.MCP)
       .then(() => sendResponse({ ok: true }))
       .catch((err) => sendResponse({ ok: false, error: String(err?.message || err) }));
     return true;
@@ -1228,7 +1202,7 @@ chrome.action.onClicked.addListener(async (tab) => {
       return;
     }
     const summary = await chrome.tabs.sendMessage(tab.id, { type: 'request.dom.summary' });
-    await getHalfPipe().send({ ...summary, tabId: tab.id });
+    await getHalfPipe().send({ ...summary, tabId: tab.id }, kTarget.MCP);
     clearBadgeLater();
   } catch {
     setBadge('ERR', '#D93025');

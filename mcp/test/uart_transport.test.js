@@ -4,11 +4,10 @@ import assert from 'node:assert/strict';
 import { UartTransport } from '../src/uart.js';
 import {
   encodeControlFrame,
-  encodeLogFrame,
-  encodeChunkFrame,
-  encodeAckFrame,
   kFrameType,
+  kTarget,
 } from '../../shared/binary_frame.js';
+import { HalfPipe } from '../../shared/halfpipe.js';
 
 function makeTestTransport(commandTimeoutMs = 100) {
   const writes = [];
@@ -30,7 +29,6 @@ function makeTestTransport(commandTimeoutMs = 100) {
       close: (cb) => cb?.()
     };
     if (!this.halfpipe) {
-      const { HalfPipe } = await import('../../shared/halfpipe.js');
       this.halfpipe = new HalfPipe({
         writeFn: async (frameBytes) => {
           await new Promise((resolve, reject) => {
@@ -40,6 +38,7 @@ function makeTestTransport(commandTimeoutMs = 100) {
             });
           });
         },
+        ackTarget: kTarget.EXTENSION,
         log: () => {},
       });
     }
@@ -48,144 +47,170 @@ function makeTestTransport(commandTimeoutMs = 100) {
   return { transport, writes };
 }
 
-test('onData routes valid frame to halfpipe', async () => {
+const fwTool = { target: 'fw' };
+const hidTool = { target: 'hid' };
+const extTool = { target: 'extension' };
+const stateRequestTool = {
+  target: 'fw',
+  matchResponse: (msg) => msg?.type === 'state' && typeof msg.busy === 'boolean',
+};
+
+test('feedBytes routes valid CONTROL frame to halfpipe onControl', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
   const received = [];
-  transport.halfpipe.onFrame = (frame) => received.push(frame);
+  transport.halfpipe.onControl((msg) => received.push(msg));
 
-  const frame = encodeControlFrame({ ok: true, type: 'state' });
-  transport.onData(frame);
+  const frame = encodeControlFrame({ ok: true, type: 'state', busy: false });
+  transport.halfpipe.feedBytes(frame);
 
   assert.equal(received.length, 1);
-  assert.equal(received[0].type, kFrameType.CONTROL);
+  assert.equal(received[0].type, 'state');
   transport.close();
 });
 
-test('onData skips non-magic bytes', async () => {
+test('feedBytes skips garbage bytes before magic', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
   const received = [];
-  transport.halfpipe.onFrame = (frame) => received.push(frame);
+  transport.halfpipe.onControl((msg) => received.push(msg));
 
   const garbage = Buffer.from([0x00, 0x01, 0x02, 0xFF]);
   const frame = encodeControlFrame({ ok: true });
-  transport.onData(Buffer.concat([garbage, frame]));
+  transport.halfpipe.feedBytes(Buffer.concat([garbage, frame]));
 
   assert.equal(received.length, 1);
-  assert.equal(received[0].type, kFrameType.CONTROL);
   transport.close();
 });
 
-test('onData handles corrupted frame (bad CRC)', async () => {
+test('feedBytes handles split frame (incremental delivery)', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
   const received = [];
-  transport.halfpipe.onFrame = (frame) => received.push(frame);
+  transport.halfpipe.onControl((msg) => received.push(msg));
 
   const frame = encodeControlFrame({ ok: true });
-  const corrupted = Buffer.from(frame);
-  corrupted[8] ^= 0xff; // corrupt payload byte
-  transport.onData(corrupted);
-
-  // Corrupted frame should be consumed but not routed
-  assert.equal(received.length, 0);
-  assert.equal(transport.readBuffer.length, 0);
-  transport.close();
-});
-
-test('onData handles incomplete frame (waits for more data)', async () => {
-  const { transport } = makeTestTransport();
-  await transport.open();
-
-  const received = [];
-  transport.halfpipe.onFrame = (frame) => received.push(frame);
-
-  const frame = encodeControlFrame({ ok: true });
-  const half1 = frame.subarray(0, 6);
-  const half2 = frame.subarray(6);
-
-  transport.onData(half1);
+  transport.halfpipe.feedBytes(frame.subarray(0, 6));
   assert.equal(received.length, 0);
 
-  transport.onData(half2);
+  transport.halfpipe.feedBytes(frame.subarray(6));
   assert.equal(received.length, 1);
   transport.close();
 });
 
-test('sendRequest sends via halfpipe and resolves on response', async () => {
+test('feedBytes drops corrupted frame (bad CRC)', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
-  const pending = transport.sendRequest(
+  const received = [];
+  transport.halfpipe.onControl((msg) => received.push(msg));
+
+  const frame = Buffer.from(encodeControlFrame({ ok: true }));
+  frame[8] ^= 0xff; // corrupt payload byte
+  transport.halfpipe.feedBytes(frame);
+
+  assert.equal(received.length, 0);
+  transport.close();
+});
+
+test('send (extension tool) sends CHUNK frames and resolves on message', async () => {
+  const { transport } = makeTestTransport();
+  await transport.open();
+
+  const pending = transport.send(
     { type: 'tabs.list.request', request_id: 'tl-1' },
+    extTool,
     { timeoutMs: 200 }
   );
 
-  // Simulate response arriving via halfpipe
   setTimeout(() => {
-    const response = { type: 'tabs.list', request_id: 'tl-1', tabs: [{ id: 1 }] };
-    // Trigger the halfpipe message callback
-    transport.halfpipe._messageHandler(response);
+    transport.halfpipe._messageHandler({ type: 'tabs.list', request_id: 'tl-1', tabs: [] });
   }, 10);
 
   const result = await pending;
   assert.equal(result.type, 'tabs.list');
-  assert.equal(result.tabs.length, 1);
   transport.close();
 });
 
-test('sendRequest times out correctly', async () => {
+test('send (fw tool) sends CONTROL frame and resolves on ok response', async () => {
+  const { transport, writes } = makeTestTransport();
+  await transport.open();
+
+  const pending = transport.send({ type: 'mouse.click', button: 'left' }, fwTool, { timeoutMs: 200 });
+
+  setTimeout(() => {
+    transport.halfpipe._controlHandler({ ok: true });
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+
+  // Verify a binary AK frame was written
+  assert.ok(writes.length >= 1);
+  assert.equal(writes[0][0], 0x41); // 'A'
+  assert.equal(writes[0][1], 0x4b); // 'K'
+  // Type byte should have FW target bits set
+  assert.equal((writes[0][2] >> 5) & 0x7, kTarget.FW);
+  assert.equal(writes[0][2] & 0x1f, kFrameType.CONTROL);
+  transport.close();
+});
+
+test('send (fw tool) uses matchResponse for non-ok state shape', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
+  const pending = transport.send({ type: 'state.request' }, stateRequestTool, { timeoutMs: 200 });
+
+  setTimeout(() => {
+    // No 'ok' field — matchResponse identifies it as a valid state response
+    transport.halfpipe._controlHandler({ type: 'state', busy: false });
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.msg.type, 'state');
+  assert.equal(result.msg.busy, false);
+  transport.close();
+});
+
+test('send (hid tool) sends CONTROL frame with HID target bits', async () => {
+  const { transport, writes } = makeTestTransport();
+  await transport.open();
+
+  const pending = transport.send({ type: 'mouse.click', button: 'left' }, hidTool, { timeoutMs: 200 });
+
+  setTimeout(() => {
+    transport.halfpipe._controlHandler({ ok: true });
+  }, 10);
+
+  const result = await pending;
+  assert.equal(result.ok, true);
+
+  assert.ok(writes.length >= 1);
+  assert.equal(writes[0][0], 0x41); // 'A'
+  assert.equal(writes[0][1], 0x4b); // 'K'
+  assert.equal((writes[0][2] >> 5) & 0x7, kTarget.HID);
+  assert.equal(writes[0][2] & 0x1f, kFrameType.CONTROL);
+  transport.close();
+});
+
+test('send times out on fw tool', async () => {
+  const { transport } = makeTestTransport();
+  await transport.open();
   await assert.rejects(
-    () => transport.sendRequest(
-      { type: 'tabs.list.request', request_id: 'tl-timeout' },
-      { timeoutMs: 30 }
-    ),
+    () => transport.send({ type: 'state.request' }, fwTool, { timeoutMs: 30 }),
     /device_timeout/
   );
   transport.close();
 });
 
-test('sendControlCommand sends AK control frame and resolves', async () => {
-  const { transport, writes } = makeTestTransport();
-  await transport.open();
-
-  const pending = transport.sendControlCommand(
-    { type: 'state.request' },
-    { timeoutMs: 200 }
-  );
-
-  // Simulate firmware control response via halfpipe
-  setTimeout(() => {
-    transport.halfpipe._controlHandler({ ok: true, type: 'state', busy: false });
-  }, 10);
-
-  const result = await pending;
-  assert.equal(result.ok, true);
-  assert.equal(result.msg.type, 'state');
-
-  // Verify a binary frame was written (not JSON text)
-  assert.ok(writes.length >= 1);
-  assert.equal(writes[0][0], 0x41); // 'A'
-  assert.equal(writes[0][1], 0x4b); // 'K'
-  transport.close();
-});
-
-test('sendControlCommand times out correctly', async () => {
+test('send times out on extension tool', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
-
   await assert.rejects(
-    () => transport.sendControlCommand(
-      { type: 'state.request' },
-      { timeoutMs: 30 }
-    ),
+    () => transport.send({ type: 'tabs.list.request' }, extTool, { timeoutMs: 30 }),
     /device_timeout/
   );
   transport.close();

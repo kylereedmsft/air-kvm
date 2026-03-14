@@ -10,7 +10,7 @@ namespace airkvm::fw {
 CommandRouter::CommandRouter(TransportMux& transport, DeviceState& state, HidController& hid)
     : transport_(transport), state_(state), hid_(hid) {}
 
-void CommandRouter::ProcessControlFrame(const AkFrame& frame) {
+void CommandRouter::ProcessFwFrame(const AkFrame& frame) {
   const std::string json(
       reinterpret_cast<const char*>(frame.payload),
       frame.payload_len);
@@ -19,11 +19,43 @@ void CommandRouter::ProcessControlFrame(const AkFrame& frame) {
     transport_.EmitControl(R"({"ok":false,"error":"invalid_command"})");
     return;
   }
-  const bool ok = HandleCommand(*cmd);
+  const bool ok = HandleFwCommand(*cmd);
   transport_.EmitControl(ok ? R"({"ok":true})" : R"({"ok":false,"error":"command_rejected"})");
 }
 
-bool CommandRouter::HandleCommand(const airkvm::Command& cmd) {
+void CommandRouter::ProcessHidFrame(const AkFrame& frame) {
+  const std::string json(
+      reinterpret_cast<const char*>(frame.payload),
+      frame.payload_len);
+  const auto cmd = airkvm::ParseCommandLine(json);
+  if (!cmd.has_value()) {
+    transport_.EmitControl(R"({"ok":false,"error":"invalid_command"})");
+    return;
+  }
+  const bool ok = HandleHidCommand(*cmd);
+  transport_.EmitControl(ok ? R"({"ok":true})" : R"({"ok":false,"error":"command_rejected"})");
+}
+
+bool CommandRouter::HandleFwCommand(const airkvm::Command& cmd) {
+  switch (cmd.type) {
+    case airkvm::CommandType::StateRequest:
+      transport_.EmitState(state_);
+      return true;
+    case airkvm::CommandType::StateSet:
+      state_.busy = cmd.busy;
+      transport_.EmitState(state_);
+      return true;
+    case airkvm::CommandType::FwVersionRequest:
+      transport_.EmitControl(
+          R"({"type":"fw.version","version":")" AIRKVM_FW_VERSION
+          R"(","built_at":")" AIRKVM_FW_BUILT_AT R"("})");
+      return true;
+    default:
+      return true;
+  }
+}
+
+bool CommandRouter::HandleHidCommand(const airkvm::Command& cmd) {
   switch (cmd.type) {
     case airkvm::CommandType::MouseMoveRel: {
       const bool ok = hid_.SendMouseMoveRel(cmd.dx, cmd.dy);
@@ -47,22 +79,9 @@ bool CommandRouter::HandleCommand(const airkvm::Command& cmd) {
       if (!ok) transport_.EmitLog("hid.reject key.type");
       return ok;
     }
-    case airkvm::CommandType::StateRequest:
-      transport_.EmitState(state_);
-      return true;
-    case airkvm::CommandType::StateSet:
-      state_.busy = cmd.busy;
-      transport_.EmitState(state_);
-      return true;
-    case airkvm::CommandType::FwVersionRequest:
-      transport_.EmitControl(
-          R"({"type":"fw.version","version":")" AIRKVM_FW_VERSION
-          R"(","built_at":")" AIRKVM_FW_BUILT_AT R"("})");
-      return true;
-    case airkvm::CommandType::Unknown:
+    default:
       return true;
   }
-  return true;
 }
 
 }  // namespace airkvm::fw

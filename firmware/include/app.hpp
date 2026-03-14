@@ -68,6 +68,7 @@ class AirKvmApp {
   void OnBleFrame(const AkFrame& frame);
   void OnBleConnected(NimBLEServer* server);
   void OnBleDisconnected(NimBLEServer* server);
+  void SendNack(const AkFrame& frame);
   bool DrainUartBytes();
 #if defined(ESP32)
   void DrainBleRxQueue();

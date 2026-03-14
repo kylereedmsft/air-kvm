@@ -22,7 +22,8 @@ uint32_t AkCrc32(const uint8_t* data, size_t len) {
 }
 
 bool AkFrameParser::IsValidType(uint8_t type) {
-  return type >= kAkFrameTypeChunk && type <= kAkFrameTypeReset;
+  const uint8_t frame_type = AkDecodeFrameType(type);
+  return frame_type >= kAkFrameTypeChunk && frame_type <= kAkFrameTypeReset;
 }
 
 bool AkEncodeFrame(
@@ -141,7 +142,8 @@ void AkFrameParser::TryEmitFrame(const FrameCallback& on_frame) {
   }
 
   AkFrame frame{};
-  frame.type        = header_[2];
+  frame.type        = AkDecodeFrameType(header_[2]);
+  frame.target      = AkDecodeTarget(header_[2]);
   frame.transfer_id = static_cast<uint16_t>(header_[3]) | (static_cast<uint16_t>(header_[4]) << 8);
   frame.seq         = static_cast<uint16_t>(header_[5]) | (static_cast<uint16_t>(header_[6]) << 8);
   frame.payload_len = payload_len;

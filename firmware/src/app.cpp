@@ -112,26 +112,54 @@ bool AirKvmApp::DrainUartBytes() {
   return true;
 }
 
-void AirKvmApp::OnUartFrame(const AkFrame& frame) {
-  if (frame.type == kAkFrameTypeControl) {
-    router_.ProcessControlFrame(frame);
-    return;
+void AirKvmApp::SendNack(const AkFrame& frame) {
+  uint8_t nack[kAkMaxFrameLen];
+  size_t nack_len = 0;
+  const uint8_t type_byte = ((kAkTargetMcp & 0x7u) << 5) | kAkFrameTypeNack;
+  if (AkEncodeFrame(type_byte, frame.transfer_id, frame.seq,
+                    nullptr, 0, nack, sizeof(nack), &nack_len)) {
+    transport_.SendToUart(nack, nack_len);
   }
+}
+
+void AirKvmApp::OnUartFrame(const AkFrame& frame) {
   if (frame.type == kAkFrameTypeReset) {
     uart_parser_.Reset();
     transport_.ForwardFrameToBle(frame);
     return;
   }
-  // CHUNK, ACK, NACK, LOG → forward to extension.
-  if (!transport_.ForwardFrameToBle(frame)) {
-    // Frame too large for BLE. Send a NACK back to MCP.
-    uint8_t nack[kAkMaxFrameLen];
-    size_t nack_len = 0;
-    if (AkEncodeFrame(kAkFrameTypeNack, frame.transfer_id, frame.seq,
-                      nullptr, 0, nack, sizeof(nack), &nack_len)) {
-      transport_.SendToUart(nack, nack_len);
-    }
-    transport_.EmitLog(R"({"evt":"ble.forward.nack","reason":"frame_too_large"})");
+
+  switch (frame.target) {
+    case kAkTargetFw:
+      if (frame.type != kAkFrameTypeControl) {
+        SendNack(frame);
+        transport_.EmitLog(R"({"evt":"fw.nack","reason":"expected_control"})");
+        return;
+      }
+      router_.ProcessFwFrame(frame);
+      return;
+
+    case kAkTargetHid:
+      if (frame.type != kAkFrameTypeControl) {
+        SendNack(frame);
+        transport_.EmitLog(R"({"evt":"hid.nack","reason":"expected_control"})");
+        return;
+      }
+      router_.ProcessHidFrame(frame);
+      return;
+
+    case kAkTargetExtension:
+      if (!transport_.ForwardFrameToBle(frame)) {
+        SendNack(frame);
+        transport_.EmitLog(R"({"evt":"ble.forward.nack","reason":"frame_too_large"})");
+      }
+      return;
+
+    case kAkTargetMcp:
+    default:
+      SendNack(frame);
+      transport_.EmitLog(R"({"evt":"uart.nack","reason":"invalid_target"})");
+      return;
   }
 }
 

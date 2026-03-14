@@ -6,11 +6,10 @@ import { createServer } from '../src/server.js';
 function makeHarness(opts = {}) {
   const sent = [];
   const transport = {
-    sendRequest: opts.sendRequest || (async (command, _opts) => {
+    send: opts.send || (async (command, tool) => {
+      const isLocal = tool.target === 'fw' || tool.target === 'hid';
+      if (isLocal) return { ok: true, msg: { ok: true } };
       return { ok: true, request_id: command.request_id };
-    }),
-    sendControlCommand: opts.sendControlCommand || (async (command) => {
-      return { ok: true, msg: { ok: true } };
     }),
   };
   const server = createServer({ transport, send: (msg) => sent.push(msg) });
@@ -54,7 +53,7 @@ test('unknown tool returns error', () => {
   assert.equal(sent[0].error.code, -32601);
 });
 
-test('airkvm_send routes through sendControlCommand', async () => {
+test('airkvm_send routes through transport.send as fw tool', async () => {
   const { sent, server } = makeHarness();
   server.handleRequest({
     jsonrpc: '2.0', id: 1,
@@ -67,9 +66,9 @@ test('airkvm_send routes through sendControlCommand', async () => {
   assert.ok(sent[0].result.content[0].text.includes('forwarded'));
 });
 
-test('airkvm_send rejection surfaces as device rejected', async () => {
+test('airkvm_send rejection surfaces as device error', async () => {
   const { sent, server } = makeHarness({
-    sendControlCommand: async () => ({ ok: false, msg: { ok: false, error: 'invalid_key' } }),
+    send: async () => ({ ok: false, msg: { ok: false, error: 'invalid_key' } }),
   });
   server.handleRequest({
     jsonrpc: '2.0', id: 1,
@@ -79,12 +78,11 @@ test('airkvm_send rejection surfaces as device rejected', async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(sent.length, 1);
   assert.equal(sent[0].isError, true);
-  assert.ok(sent[0].result.content[0].text.includes('device rejected'));
 });
 
 test('airkvm_send transport error', async () => {
   const { sent, server } = makeHarness({
-    sendControlCommand: async () => { throw new Error('serial_gone'); },
+    send: async () => { throw new Error('serial_gone'); },
   });
   server.handleRequest({
     jsonrpc: '2.0', id: 1,
@@ -93,12 +91,12 @@ test('airkvm_send transport error', async () => {
   });
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(sent[0].isError, true);
-  assert.ok(sent[0].result.content[0].text.includes('transport error'));
+  assert.ok(sent[0].result.content[0].text.includes('transport_error'));
 });
 
-test('airkvm_list_tabs uses sendRequest', async () => {
+test('airkvm_list_tabs uses transport.send', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'tabs.list',
       request_id: command.request_id,
       tabs: [{ id: 1, title: 'Test' }]
@@ -119,7 +117,7 @@ test('airkvm_list_tabs uses sendRequest', async () => {
 
 test('airkvm_window_bounds returns structured json', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'window.bounds',
       request_id: command.request_id,
       tab_id: 2,
@@ -142,7 +140,7 @@ test('airkvm_window_bounds returns structured json', async () => {
 
 test('airkvm_open_tab returns structured json', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'tab.open',
       request_id: command.request_id,
       tab: { id: 101, window_id: 3, active: true, title: 'Example', url: 'https://example.com' },
@@ -162,7 +160,7 @@ test('airkvm_open_tab returns structured json', async () => {
 
 test('airkvm_exec_js_tab returns structured json', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'js.exec.result',
       request_id: command.request_id,
       tab_id: 2,
@@ -183,9 +181,9 @@ test('airkvm_exec_js_tab returns structured json', async () => {
   assert.equal(payload.value_json, '"hello"');
 });
 
-test('airkvm_dom_snapshot uses sendRequest', async () => {
+test('airkvm_dom_snapshot uses transport.send', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'dom.snapshot',
       request_id: command.request_id,
       html: '<h1>hello</h1>',
@@ -205,9 +203,9 @@ test('airkvm_dom_snapshot uses sendRequest', async () => {
   assert.equal(payload.snapshot.html, '<h1>hello</h1>');
 });
 
-test('airkvm_screenshot_tab uses sendRequest', async () => {
+test('airkvm_screenshot_tab uses transport.send', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async (command) => ({
+    send: async (command) => ({
       type: 'screenshot.response',
       request_id: command.request_id,
       source: 'tab',
@@ -231,9 +229,9 @@ test('airkvm_screenshot_tab uses sendRequest', async () => {
   assert.equal(payload.base64, '/9j/fakebase64');
 });
 
-test('sendRequest error surfaces as transport_error', async () => {
+test('transport error surfaces as transport_error', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async () => { throw new Error('device_timeout'); },
+    send: async () => { throw new Error('device_timeout'); },
   });
   server.handleRequest({
     jsonrpc: '2.0', id: 5,
@@ -247,9 +245,9 @@ test('sendRequest error surfaces as transport_error', async () => {
   assert.equal(payload.detail, 'device_timeout');
 });
 
-test('sendRequest device error response', async () => {
+test('device error response surfaces as structured error', async () => {
   const { sent, server } = makeHarness({
-    sendRequest: async () => ({ ok: false, error: 'no_tab', request_id: 'dom-dev-err' }),
+    send: async () => ({ ok: false, error: 'no_tab', request_id: 'dom-dev-err' }),
   });
   server.handleRequest({
     jsonrpc: '2.0', id: 6,

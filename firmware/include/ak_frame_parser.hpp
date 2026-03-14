@@ -7,12 +7,22 @@
 namespace airkvm::fw {
 
 // AK frame type constants — match shared/binary_frame.js kFrameType
+// Frame types occupy the lower 5 bits of the type byte.
 constexpr uint8_t kAkFrameTypeChunk   = 0x01;
 constexpr uint8_t kAkFrameTypeControl = 0x02;
 constexpr uint8_t kAkFrameTypeLog     = 0x03;
 constexpr uint8_t kAkFrameTypeAck     = 0x04;
 constexpr uint8_t kAkFrameTypeNack    = 0x05;
 constexpr uint8_t kAkFrameTypeReset   = 0x06;
+
+// Routing target — upper 3 bits of the type byte — match shared/binary_frame.js kTarget
+constexpr uint8_t kAkTargetMcp       = 1;
+constexpr uint8_t kAkTargetFw        = 2;
+constexpr uint8_t kAkTargetExtension = 3;
+constexpr uint8_t kAkTargetHid       = 4;
+
+inline uint8_t AkDecodeFrameType(uint8_t type_byte) { return type_byte & 0x1fu; }
+inline uint8_t AkDecodeTarget(uint8_t type_byte)    { return (type_byte >> 5) & 0x07u; }
 
 // AK frame layout: magic(2) + type(1) + txid(2) + seq(2) + len(1) + payload(0-255) + crc(4)
 constexpr size_t kAkHeaderLen   = 8;
@@ -32,7 +42,8 @@ bool AkEncodeFrame(
 
 // Parsed, validated AK frame.
 struct AkFrame {
-  uint8_t  type;
+  uint8_t  type;    // frame type (lower 5 bits decoded)
+  uint8_t  target;  // routing target (upper 3 bits decoded)
   uint16_t transfer_id;
   uint16_t seq;
   uint8_t  payload[kAkMaxPayload];

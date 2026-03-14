@@ -10,6 +10,7 @@ import {
   encodeNackFrame,
   encodeResetFrame,
   encodeFrame,
+  kTarget,
 } from '../../shared/binary_frame.js';
 
 // Shared code returns Uint8Array; helpers for test convenience.
@@ -74,12 +75,12 @@ describe('HalfPipe TX', () => {
 
   beforeEach(() => {
     cap = makeWriteCapture();
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
   });
 
   it('1. small message (single chunk)', async () => {
     const obj = { hello: 'world' };
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     // Wait a tick for the chunk to be written
     await new Promise(r => setTimeout(r, 10));
@@ -101,7 +102,7 @@ describe('HalfPipe TX', () => {
     // Build object whose JSON is ~600 bytes
     const json = makeJsonOfSize(600);
     const obj = JSON.parse(json);
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     const expectedChunks = Math.ceil(600 / kMaxPayload); // 3 chunks (255+255+90)
 
@@ -122,7 +123,7 @@ describe('HalfPipe TX', () => {
   it('3. exact multiple of 255 sends zero-length terminator', async () => {
     const json = makeJsonOfSize(510); // 2 × 255
     const obj = JSON.parse(json);
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     // Expect 3 frames: 255, 255, 0 (terminator)
     for (let i = 0; i < 3; i += 1) {
@@ -145,7 +146,7 @@ describe('HalfPipe TX', () => {
 
   it('4. ack timeout + retry', async () => {
     const obj = { retry: true };
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     // First attempt — don't ACK, wait for timeout + retry
     await new Promise(r => setTimeout(r, 10));
@@ -167,8 +168,8 @@ describe('HalfPipe TX', () => {
   });
 
   it('5. retries exhausted rejects', async () => {
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 50, maxRetries: 2 });
-    const p = hp.send({ fail: true });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 50, maxRetries: 2 , ackTarget: kTarget.MCP });
+    const p = hp.send({ fail: true }, kTarget.EXTENSION);
 
     // Wait for all attempts to timeout: (2+1) * 50ms + buffer
     await assert.rejects(p, /chunk_send_failed/);
@@ -176,7 +177,7 @@ describe('HalfPipe TX', () => {
 
   it('6. nack triggers retry then ack succeeds', async () => {
     const obj = { nack_test: 1 };
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     await new Promise(r => setTimeout(r, 10));
     const f1 = inspectFrame(cap.frames[0]);
@@ -191,7 +192,7 @@ describe('HalfPipe TX', () => {
 
   it('7. reset during send rejects with stream_reset', async () => {
     const obj = { reset_test: true };
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     await new Promise(r => setTimeout(r, 10));
     simulateReset(hp);
@@ -204,8 +205,8 @@ describe('HalfPipe TX', () => {
     const obj1 = { q: 1 };
     const obj2 = { q: 2 };
 
-    const p1 = hp.send(obj1);
-    const p2 = hp.send(obj2);
+    const p1 = hp.send(obj1, kTarget.EXTENSION);
+    const p2 = hp.send(obj2, kTarget.EXTENSION);
 
     // First send's chunk should be written
     await new Promise(r => setTimeout(r, 10));
@@ -236,7 +237,7 @@ describe('HalfPipe RX', () => {
 
   beforeEach(() => {
     cap = makeWriteCapture();
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
   });
 
   it('9. single chunk receive', async () => {
@@ -370,7 +371,7 @@ describe('HalfPipe Reset', () => {
 
   beforeEach(() => {
     cap = makeWriteCapture();
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
   });
 
   it('15. reset() sends reset frame', async () => {
@@ -382,7 +383,7 @@ describe('HalfPipe Reset', () => {
   });
 
   it('16. reset() clears TX state — send rejects, then new send works', async () => {
-    const p = hp.send({ will_reset: true });
+    const p = hp.send({ will_reset: true }, kTarget.EXTENSION);
     await new Promise(r => setTimeout(r, 10));
 
     await hp.reset();
@@ -390,7 +391,7 @@ describe('HalfPipe Reset', () => {
 
     // New send should work
     cap.frames.length = 0;
-    const p2 = hp.send({ after_reset: true });
+    const p2 = hp.send({ after_reset: true }, kTarget.EXTENSION);
     await new Promise(r => setTimeout(r, 10));
 
     const f = inspectFrame(cap.frames[0]);
@@ -428,7 +429,7 @@ describe('HalfPipe Reset', () => {
     hp.onMessage((msg) => { received = msg; });
 
     // Start a send
-    const p = hp.send({ will_be_reset: true });
+    const p = hp.send({ will_be_reset: true }, kTarget.EXTENSION);
     await new Promise(r => setTimeout(r, 10));
 
     // Feed partial RX
@@ -460,7 +461,7 @@ describe('HalfPipe Control/Log', () => {
 
   beforeEach(() => {
     cap = makeWriteCapture();
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
   });
 
   it('19. control frame delivered', () => {
@@ -501,12 +502,12 @@ describe('HalfPipe Edge Cases', () => {
 
   beforeEach(() => {
     cap = makeWriteCapture();
-    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 });
+    hp = new HalfPipe({ writeFn: cap.writeFn, ackTimeoutMs: 100, maxRetries: 3 , ackTarget: kTarget.MCP });
   });
 
   it('21. empty object send/receive', async () => {
     const obj = {};
-    const p = hp.send(obj);
+    const p = hp.send(obj, kTarget.EXTENSION);
 
     await new Promise(r => setTimeout(r, 10));
     const f = inspectFrame(cap.frames[0]);
@@ -531,7 +532,7 @@ describe('HalfPipe Edge Cases', () => {
   });
 
   it('22. close() rejects pending send', async () => {
-    const p = hp.send({ close_test: true });
+    const p = hp.send({ close_test: true }, kTarget.EXTENSION);
     await new Promise(r => setTimeout(r, 10));
 
     hp.close();
