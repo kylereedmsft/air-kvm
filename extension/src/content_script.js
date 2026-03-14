@@ -1,3 +1,6 @@
+// Content script: injected into every browser tab. Builds and sends a DOM summary
+// (title, URL, active element, actionable elements) to the service worker on request,
+// and tracks/reports busy state when the tab is mid-automation.
 import { buildDomSummary, busyEvent } from './messages.js';
 
 let busy = false;

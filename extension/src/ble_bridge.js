@@ -1,3 +1,9 @@
+// Bridge page script: owns the HalfPipe instance and the BLE connection lifecycle.
+// Runs in the ble_bridge.html tab (a regular browser page with Web Bluetooth access).
+// Inbound BLE bytes are fed directly into HalfPipe; reassembled messages are forwarded
+// to the service worker as { type:'hp.message' }. The service worker sends outbound
+// payloads back here as { type:'hp.send' } for HalfPipe to chunk and write to BLE.
+// Also manages connect/disconnect UI, health watchdog, and handshake resolution.
 import { HalfPipe } from '../../shared/halfpipe.js';
 import { kTarget } from '../../shared/binary_frame.js';
 import {

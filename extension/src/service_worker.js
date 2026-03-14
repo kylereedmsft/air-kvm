@@ -1,3 +1,8 @@
+// Service worker: MV3 background context. Receives firmware commands from the
+// bridge page as { type:'hp.message' } and dispatches to browser automation
+// handlers (tabs, DOM snapshot, js.exec, screenshot, window bounds). Sends
+// results back to firmware via sendViaHalfPipe() → { type:'hp.send' } to bridge.
+// Also manages the ble_bridge.html tab lifecycle and CDP debugger sessions.
 import { resolveScreenshotConfig } from './screenshot_protocol.js';
 const kBleBridgePagePath = 'ble_bridge.html';
 const kDebugDefault = false;

@@ -1,3 +1,7 @@
+// Screenshot configuration helpers: resolves and clamps capture parameters
+// (width, height, quality, maxChars, desktopDelayMs) against the shared
+// SCREENSHOT_CONTRACT bounds, used by both MCP (to validate tool args) and
+// service_worker.js (to normalise incoming screenshot requests).
 import { SCREENSHOT_CONTRACT } from '../../shared/screenshot_contract.js';
 
 export const kDefaultScreenshotConfig = {

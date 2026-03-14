@@ -1,3 +1,7 @@
+// Web Bluetooth transport helpers: connect to the AirKVM BLE GATT UART service,
+// write binary frames to the RX characteristic (with withoutResponse→withResponse
+// fallback and telemetry), and receive notifications from the TX characteristic.
+// Exported API: connectBle, disconnectBle, postBinary, getConnectedDeviceInfo.
 
 const UART_SERVICE_UUID = '6e400101-b5a3-f393-e0a9-e50e24dccb01';
 const UART_RX_CHAR_UUID = '6e400102-b5a3-f393-e0a9-e50e24dccb01';

@@ -1,3 +1,6 @@
+// Shared message helpers used by both content_script.js and service_worker.js:
+// buildDomSummary — serialises a page's DOM into a compact snapshot object,
+// busyEvent — builds the busy-state change message sent from content script to SW.
 export function buildDomSummary(documentLike, href) {
   const title = documentLike.title || '';
   const activeTag = documentLike.activeElement?.tagName || null;
