@@ -50,10 +50,6 @@ function makeTestTransport(commandTimeoutMs = 100) {
 const fwTool = { target: 'fw' };
 const hidTool = { target: 'hid' };
 const extTool = { target: 'extension' };
-const stateRequestTool = {
-  target: 'fw',
-  matchResponse: (msg) => msg?.type === 'state' && typeof msg.busy === 'boolean',
-};
 
 test('feedBytes routes valid CONTROL frame to halfpipe onControl', async () => {
   const { transport } = makeTestTransport();
@@ -158,14 +154,13 @@ test('send (fw tool) sends CONTROL frame and resolves on ok response', async () 
   transport.close();
 });
 
-test('send (fw tool) uses matchResponse for non-ok state shape', async () => {
+test('send (fw tool) resolves on first non-boot CONTROL frame', async () => {
   const { transport } = makeTestTransport();
   await transport.open();
 
-  const pending = transport.send({ type: 'state.request' }, stateRequestTool, { timeoutMs: 200 });
+  const pending = transport.send({ type: 'state.request' }, fwTool, { timeoutMs: 200 });
 
   setTimeout(() => {
-    // No 'ok' field — matchResponse identifies it as a valid state response
     transport._handleControl({ type: 'state', busy: false });
   }, 10);
 

@@ -111,7 +111,6 @@ const TOOL_DEFINITIONS = [
     description: 'Request the current device state from the AirKVM firmware.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     build: () => ({ type: 'state.request' }),
-    matchResponse: (msg) => msg?.type === 'state' && typeof msg.busy === 'boolean',
   },
   {
     name: 'airkvm_state_set',
@@ -125,7 +124,6 @@ const TOOL_DEFINITIONS = [
       required: ['busy']
     },
     build: (args) => ({ type: 'state.set', busy: args.busy }),
-    matchResponse: (msg) => msg?.type === 'state' && typeof msg.busy === 'boolean'
   },
   {
     name: 'airkvm_fw_version_request',
@@ -133,7 +131,6 @@ const TOOL_DEFINITIONS = [
     description: 'Request the firmware version from the AirKVM device.',
     inputSchema: { type: 'object', properties: {}, required: [] },
     build: () => ({ type: 'fw.version.request' }),
-    matchResponse: (msg) => msg?.type === 'fw.version' && typeof msg.version === 'string',
   },
   {
     name: 'airkvm_transfer_reset',
@@ -191,7 +188,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_dom_snapshot',
     target: 'extension',
-    timeoutMs: 60000,
+    timeoutMs: 10000,
     description: 'Request a DOM snapshot from the target extension over the AirKVM transport.',
     inputSchema: {
       type: 'object',
@@ -255,7 +252,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_screenshot_desktop',
     target: 'extension',
-    timeoutMs: 30000,
+    timeoutMs: 45000,
     description: 'Request a desktop screenshot from the target extension over the AirKVM transport.',
     inputSchema: {
       type: 'object',

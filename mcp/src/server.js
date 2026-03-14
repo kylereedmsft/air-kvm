@@ -25,10 +25,6 @@ function sanitizeSegment(value, fallback) {
   return text.replace(/[^a-zA-Z0-9._-]+/g, '_');
 }
 
-function isScreenshotTool(name) {
-  return name === 'airkvm_screenshot_tab' || name === 'airkvm_screenshot_desktop';
-}
-
 function extensionForMime(mime) {
   if (mime === 'image/jpeg') return 'jpg';
   if (mime === 'image/png') return 'png';
@@ -36,8 +32,7 @@ function extensionForMime(mime) {
   return 'bin';
 }
 
-function maybePersistScreenshot(name, data) {
-  if (!isScreenshotTool(name)) return data;
+function maybePersistScreenshot(data) {
   if (process.env.AIRKVM_SAVE_SCREENSHOTS !== '1') return data;
   if (!data || typeof data.base64 !== 'string' || data.base64.length === 0) return data;
   try {
@@ -53,6 +48,11 @@ function maybePersistScreenshot(name, data) {
   } catch (err) {
     return { ...data, save_error: String(err?.message || err) };
   }
+}
+
+function prepareToolResult(tool, command, data) {
+  const shaped = tool.formatData ? tool.formatData(command, data) : data;
+  return maybePersistScreenshot(shaped);
 }
 
 function compactFrame(frame) {
@@ -124,7 +124,7 @@ export function createServer({ transport, send }) {
     }
 
     const command = tool.build(args);
-    const timeoutMs = tool.timeoutMs ?? 30000;
+    const timeoutMs = tool.timeoutMs ?? 8000;
 
     transport.send(command, tool, { timeoutMs }).then(({ ok, data }) => {
       if (!ok) {
@@ -140,10 +140,9 @@ export function createServer({ transport, send }) {
         return;
       }
 
-      const shaped = tool.formatData ? tool.formatData(command, data) : data;
       send({
         jsonrpc: '2.0', id,
-        result: makeToolResultJson(maybePersistScreenshot(name, shaped))
+        result: makeToolResultJson(prepareToolResult(tool, command, data))
       });
     }).catch((err) => {
       const diagnostics = buildDiagnostics(err);

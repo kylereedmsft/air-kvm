@@ -16,7 +16,7 @@ export class UartTransport {
     this.serialPort = null;
     this.opened = false;
     this.halfpipe = null;
-    this._pending = null; // { isLocal, matchResponse, resolve, reject, timer }
+    this._pending = null; // { isLocal, resolve, reject, timer }
     this._callQueue = Promise.resolve(); // serializes concurrent send() calls
   }
 
@@ -84,7 +84,7 @@ export class UartTransport {
       return;
     }
     const p = this._pending;
-    if (p?.isLocal && p.matchResponse(msg)) {
+    if (p?.isLocal) {
       this._pending = null;
       clearTimeout(p.timer);
       p.resolve({ ok: msg?.ok !== false, data: msg });
@@ -110,7 +110,6 @@ export class UartTransport {
       const halfpipeTarget = tool.target === 'fw' ? kTarget.FW
         : tool.target === 'hid' ? kTarget.HID
         : kTarget.EXTENSION;
-      const matchResponse = tool.matchResponse ?? ((msg) => typeof msg?.ok === 'boolean');
 
       return new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -119,7 +118,7 @@ export class UartTransport {
           reject(new Error('device_timeout'));
         }, timeoutMs);
 
-        this._pending = { isLocal, matchResponse, resolve, reject, timer };
+        this._pending = { isLocal, resolve, reject, timer };
 
         const sendPromise = isLocal
           ? this.halfpipe.sendControl(command, halfpipeTarget)
