@@ -1,3 +1,7 @@
+// UART transport: opens the serial port to the ESP32, wraps it in a HalfPipe instance,
+// and serializes outgoing commands. Firmware/HID commands are sent as CONTROL frames;
+// extension-bound commands are sent as CHUNK frames relayed over BLE by the firmware.
+
 import { SerialPort } from 'serialport';
 import { kTarget } from '../../shared/binary_frame.js';
 import { HalfPipe } from '../../shared/halfpipe.js';

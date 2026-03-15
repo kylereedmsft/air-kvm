@@ -1,4 +1,5 @@
-// Web Bluetooth transport helpers: connect to the AirKVM BLE GATT UART service,
+
+// Web Bluetooth transport helpers: connect to the AirKVM BLE GATT UART service,
 // write binary frames to the RX characteristic (with withoutResponse→withResponse
 // fallback and telemetry), and receive notifications from the TX characteristic.
 // Exported API: connectBle, disconnectBle, postBinary, getConnectedDeviceInfo.
@@ -93,7 +94,7 @@ export function setBleDebugLogger(logger) {
 export function setBleVerboseDebug(enabled) {
   verboseDebugEnabled = Boolean(enabled);
 }
-
+
 function hasBluetooth(navigatorLike) {
   return Boolean(navigatorLike?.bluetooth?.requestDevice);
 }

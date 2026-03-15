@@ -1,3 +1,8 @@
+// AK binary frame codec: encode/decode the wire frames that flow over UART (MCP↔firmware)
+// and BLE (firmware↔extension). Each frame starts with magic bytes 'AK', carries a type
+// byte (CHUNK 0x01, CONTROL 0x02, LOG 0x03, ACK 0x04, NACK 0x05, RESET 0x06), target,
+// transfer-id, sequence number, payload length, payload, and a CRC-32 trailer.
+
 // ============================================================
 // Shared constants
 // ============================================================

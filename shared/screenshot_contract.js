@@ -1,3 +1,7 @@
+// Shared constraints for screenshot requests, used by both MCP (to validate/build
+// tool arguments) and the extension (to cap capture dimensions and quality).
+// Centralising these ensures both sides always agree on legal parameter ranges.
+
 export const SCREENSHOT_CONTRACT = Object.freeze({
   width: Object.freeze({ min: 160, max: 1920, default: 960 }),
   height: Object.freeze({ min: 120, max: 1080, default: 540 }),

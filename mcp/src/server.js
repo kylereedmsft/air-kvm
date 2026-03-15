@@ -1,3 +1,7 @@
+// MCP server: handles JSON-RPC requests from the client (tools/list, tools/call),
+// validates arguments, dispatches to the UART transport for firmware/extension commands,
+// and formats responses back to the client.
+
 import fs from 'node:fs';
 import path from 'node:path';
 

@@ -1,3 +1,7 @@
+// Tool registry: defines every MCP tool's name, description, JSON schema, target
+// (fw = firmware-local, hid = HID input, extension = browser extension over BLE),
+// and how to build the outgoing command and shape the response data.
+
 import { SCREENSHOT_CONTRACT } from '../../shared/screenshot_contract.js';
 
 export function makeRequestId() {
