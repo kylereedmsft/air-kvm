@@ -1029,13 +1029,21 @@ async function handleBleCommand(command) {
   await handler(command);
 }
 
-async function sendViaHalfPipe(payload) {
-  try {
-    const res = await chrome.runtime.sendMessage({ type: 'hp.send', target: 'ble-page', payload });
-    return Boolean(res?.ok);
-  } catch {
-    return false;
-  }
+// Serialize all outbound HalfPipe sends so only one BLE CHUNK transaction is
+// in-flight at a time. chrome.runtime.sendMessage to the bridge page is not
+// re-entrant — a second call while the first is awaiting BLE ACKs will be
+// dropped or time out.
+let _sendQueue = Promise.resolve();
+function sendViaHalfPipe(payload) {
+  _sendQueue = _sendQueue.then(async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ type: 'hp.send', target: 'ble-page', payload });
+      return Boolean(res?.ok);
+    } catch {
+      return false;
+    }
+  });
+  return _sendQueue;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
