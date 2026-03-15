@@ -299,6 +299,22 @@ const TOOL_DEFINITIONS = [
       mime: data.mime || 'image/jpeg',
       base64: data.data || data.base64 || '',
     })
+  },
+  {
+    name: 'airkvm_bridge_logs',
+    target: 'extension',
+    timeoutMs: 5000,
+    description: 'Retrieve the recent log lines from the AirKVM BLE bridge page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        request_id: { type: 'string' }
+      },
+      required: []
+    },
+    build: (args) => ({ type: 'bridge.logs.request', request_id: reqId(args) }),
+    matchResponse: (cmd, msg) => msg?.type === 'bridge.logs' && msg?.request_id === cmd.request_id,
+    formatData: (cmd, data) => ({ request_id: cmd.request_id, lines: data.lines || [] })
   }
 ];
 

@@ -39,7 +39,8 @@ test('tools/list includes structured tools', () => {
     'airkvm_dom_snapshot',
     'airkvm_exec_js_tab',
     'airkvm_screenshot_tab',
-    'airkvm_screenshot_desktop'
+    'airkvm_screenshot_desktop',
+    'airkvm_bridge_logs'
   ]);
 });
 

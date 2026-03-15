@@ -28,6 +28,14 @@ let jsExecInFlight = false;
 const kSwInstanceId = `sw_${Date.now()}_${Math.floor(Math.random() * 1_000_000)}`;
 let debugEnabled = kDebugDefault;
 
+const kSwLogMaxLines = 200;
+const swLog = [];
+function swLogPush(level, ...args) {
+  const parts = args.map((a) => (a && typeof a === 'object') ? JSON.stringify(a) : String(a));
+  swLog.push(`${new Date().toISOString()} [${level}] ${parts.join(' ')}`);
+  if (swLog.length > kSwLogMaxLines) swLog.shift();
+}
+
 try {
   chrome.storage?.local?.get(kDebugStorageKey).then((stored) => {
     debugEnabled = stored?.[kDebugStorageKey] === '1';
@@ -39,6 +47,12 @@ try {
 function debugLog(...args) {
   if (!debugEnabled) return;
   console.log('[airkvm-sw]', `[${kSwInstanceId}]`, ...args);
+  swLogPush('dbg', ...args);
+}
+
+function infoLog(...args) {
+  console.log('[airkvm-sw]', `[${kSwInstanceId}]`, ...args);
+  swLogPush('inf', ...args);
 }
 
 
@@ -320,7 +334,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'ble.bridge.status') {
-    debugLog('bridge status', { status: msg.status, detail: msg.detail ?? null, tabId: sender?.tab?.id ?? null });
+    infoLog('bridge status', { status: msg.status, detail: msg.detail ?? null });
     sendResponse({ ok: true });
     return true;
   }
@@ -329,6 +343,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
   if (msg.target === 'ble-page') return;
+  if (msg.type === 'hp.message') return; // handled by halfpipe listener
   if (msg.type !== 'busy.changed') {
     debugLog('ignoring non-bridge content message', { type: msg.type });
     return;
@@ -955,6 +970,16 @@ async function runBridgeHandler(command, label, handler, onError) {
   }
 }
 
+async function sendBridgeLogs(command) {
+  const requestId = command.request_id || makeRequestId();
+  await sendViaHalfPipe({
+    type: 'bridge.logs',
+    request_id: requestId,
+    lines: swLog.slice(),
+    ts: Date.now()
+  });
+}
+
 const kBleCommandHandlers = {
   'dom.snapshot.request': (command) => runBridgeHandler(
     command,
@@ -1038,6 +1063,19 @@ const kBleCommandHandlers = {
         ts: Date.now()
       });
     }
+  ),
+  'bridge.logs.request': (command) => runBridgeHandler(
+    command,
+    'sendBridgeLogs',
+    sendBridgeLogs,
+    async (cmd, detail) => {
+      await sendViaHalfPipe({
+        type: 'bridge.logs.error',
+        request_id: cmd.request_id || null,
+        error: detail,
+        ts: Date.now()
+      });
+    }
   )
 };
 
@@ -1047,6 +1085,7 @@ async function handleBleCommand(command) {
     debugLog('handleBleCommand ignore non-command payload', command);
     return;
   }
+  infoLog('cmd <-', { type: command.type, request_id: command.request_id ?? null });
   const handler = kBleCommandHandlers[command.type];
   if (!handler) return;
   await handler(command);
@@ -1060,6 +1099,7 @@ let _sendQueue = Promise.resolve();
 function sendViaHalfPipe(payload) {
   _sendQueue = _sendQueue.then(async () => {
     try {
+      infoLog('cmd ->', { type: payload?.type, request_id: payload?.request_id ?? null });
       const res = await chrome.runtime.sendMessage({ type: 'hp.send', target: 'ble-page', payload });
       return Boolean(res?.ok);
     } catch {
