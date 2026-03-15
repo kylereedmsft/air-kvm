@@ -20,16 +20,18 @@ for (const file of readdirSync(srcDir)) {
   const ext = extname(file);
   if (ext === '.js' || ext === '.html') {
     let content = readFileSync(join(srcDir, file), 'utf8');
-    // Rewrite shared/ relative imports to flat dist/ paths
-    content = content.replaceAll("from '../../shared/binary_frame.js'", "from './binary_frame.js'");
-    content = content.replaceAll("from '../../shared/halfpipe.js'",     "from './halfpipe.js'");
+    // Rewrite any shared/ relative imports to flat dist/ paths
+    content = content.replace(/from '\.\.\/\.\.\/shared\/([\w.]+\.js)'/g, "from './$1'");
     writeFileSync(join(distDir, file), content);
   }
 }
 
-// Overwrite shim stubs with the real shared implementations
-copyFileSync(join(sharedDir, 'binary_frame.js'), join(distDir, 'binary_frame.js'));
-copyFileSync(join(sharedDir, 'halfpipe.js'),     join(distDir, 'halfpipe.js'));
+// Copy all shared/ JS files into dist/ (flattened)
+for (const file of readdirSync(sharedDir)) {
+  if (extname(file) === '.js') {
+    copyFileSync(join(sharedDir, file), join(distDir, file));
+  }
+}
 
 // Write manifest.json verbatim — paths are already relative to dist/ root
 const manifest = readFileSync(join(extensionDir, 'manifest.json'), 'utf8');
