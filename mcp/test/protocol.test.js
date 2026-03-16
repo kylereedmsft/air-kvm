@@ -23,10 +23,6 @@ test('validateArgs rejects airkvm_mouse_move_rel with non-integer', () => {
   assert.deepEqual(validateArgs(getTool('airkvm_mouse_move_rel'), { dx: 1.5, dy: 0 }), { ok: false, error: 'invalid_type:dx' });
 });
 
-test('airkvm_mouse_move_abs build', () => {
-  assert.deepEqual(getTool('airkvm_mouse_move_abs').build({ x: 100, y: 200 }), { type: 'mouse.move_abs', x: 100, y: 200 });
-});
-
 test('airkvm_mouse_click build', () => {
   assert.deepEqual(getTool('airkvm_mouse_click').build({ button: 'left' }), { type: 'mouse.click', button: 'left' });
 });
@@ -52,7 +48,7 @@ test('airkvm_key_type build', () => {
 test('validateArgs rejects airkvm_key_type with empty or too-long text', () => {
   const tool = getTool('airkvm_key_type');
   assert.deepEqual(validateArgs(tool, { text: '' }), { ok: false, error: 'too_short:text' });
-  assert.deepEqual(validateArgs(tool, { text: 'a'.repeat(129) }), { ok: false, error: 'too_long:text' });
+  assert.deepEqual(validateArgs(tool, { text: 'a'.repeat(201) }), { ok: false, error: 'too_long:text' });
 });
 
 test('airkvm_state_request build', () => {
@@ -80,7 +76,7 @@ test('target is set correctly on all tools', () => {
     'airkvm_fw_version_request', 'airkvm_transfer_reset']) {
     assert.equal(getTool(name).target, 'fw', `expected ${name} to have target: 'fw'`);
   }
-  for (const name of ['airkvm_mouse_move_rel', 'airkvm_mouse_move_abs',
+  for (const name of ['airkvm_mouse_move_rel',
     'airkvm_mouse_click', 'airkvm_key_tap', 'airkvm_key_type']) {
     assert.equal(getTool(name).target, 'hid', `expected ${name} to have target: 'hid'`);
   }

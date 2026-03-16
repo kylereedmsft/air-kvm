@@ -64,6 +64,7 @@ export class UartTransport {
 
       this.halfpipe.onControl((msg) => this._handleControl(msg));
       this.halfpipe.onMessage((msg) => this._handleMessage(msg));
+      this.halfpipe.onLog((text) => this.log(`[fw-log] ${text}`));
     }
 
     this.serialPort.on('data', (chunk) => {
@@ -75,7 +76,7 @@ export class UartTransport {
   }
 
   log(msg) {
-    if (!this.debug) return;
+    if (!this.debug && !msg.startsWith('[fw-log]')) return;
     process.stderr.write(`[uart] ${msg}\n`);
   }
 

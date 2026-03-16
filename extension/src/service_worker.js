@@ -1064,6 +1064,26 @@ const kBleCommandHandlers = {
       });
     }
   ),
+  'echo.request': (command) => runBridgeHandler(
+    command,
+    'sendEcho',
+    async (cmd) => {
+      await sendViaHalfPipe({
+        type: 'echo.response',
+        request_id: cmd.request_id || null,
+        payload: cmd.payload ?? null,
+        ts: Date.now()
+      });
+    },
+    async (cmd, detail) => {
+      await sendViaHalfPipe({
+        type: 'echo.response',
+        request_id: cmd?.request_id || null,
+        error: detail,
+        ts: Date.now()
+      });
+    }
+  ),
   'bridge.logs.request': (command) => runBridgeHandler(
     command,
     'sendBridgeLogs',

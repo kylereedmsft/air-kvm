@@ -24,7 +24,6 @@ test('tools/list includes structured tools', () => {
   assert.deepEqual(names, [
     'airkvm_send',
     'airkvm_mouse_move_rel',
-    'airkvm_mouse_move_abs',
     'airkvm_mouse_click',
     'airkvm_key_tap',
     'airkvm_key_type',
@@ -33,6 +32,7 @@ test('tools/list includes structured tools', () => {
     'airkvm_fw_version_request',
     'airkvm_transfer_reset',
     'airkvm_save_image',
+    'airkvm_echo',
     'airkvm_list_tabs',
     'airkvm_window_bounds',
     'airkvm_open_tab',

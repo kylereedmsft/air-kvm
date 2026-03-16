@@ -57,20 +57,6 @@ const TOOL_DEFINITIONS = [
     build: (args) => ({ type: 'mouse.move_rel', dx: args.dx, dy: args.dy })
   },
   {
-    name: 'airkvm_mouse_move_abs',
-    target: 'hid',
-    description: 'Move the mouse to an absolute screen position on the target machine.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        x: { type: 'integer' },
-        y: { type: 'integer' }
-      },
-      required: ['x', 'y']
-    },
-    build: (args) => ({ type: 'mouse.move_abs', x: args.x, y: args.y })
-  },
-  {
     name: 'airkvm_mouse_click',
     target: 'hid',
     description: 'Click a mouse button on the target machine.',
@@ -103,7 +89,7 @@ const TOOL_DEFINITIONS = [
     inputSchema: {
       type: 'object',
       properties: {
-        text: { type: 'string', minLength: 1, maxLength: 128 }
+        text: { type: 'string', minLength: 1, maxLength: 200 }
       },
       required: ['text']
     },
@@ -155,6 +141,21 @@ const TOOL_DEFINITIONS = [
       },
       required: ['base64', 'mime', 'path']
     }
+  },
+  {
+    name: 'airkvm_echo',
+    target: 'extension',
+    description: 'Round-trip echo to the target extension. Returns the same payload back. Useful for validating transport.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        request_id: { type: 'string' },
+        payload: { type: 'string', minLength: 1, maxLength: 1000 }
+      },
+      required: ['payload']
+    },
+    build: (args) => ({ type: 'echo.request', request_id: reqId(args), payload: args.payload }),
+    matchResponse: (cmd, msg) => msg?.type === 'echo.response' && msg?.request_id === cmd.request_id
   },
   {
     name: 'airkvm_list_tabs',

@@ -52,6 +52,7 @@ void AirKvmApp::Setup() {
 #endif
 
   NimBLEDevice::init(kDeviceName);
+  NimBLEDevice::setMTU(512);
   NimBLEDevice::setSecurityAuth(true, false, true);
   NimBLEDevice::setSecurityIOCap(0x03);
   NimBLEServer* server = NimBLEDevice::createServer();

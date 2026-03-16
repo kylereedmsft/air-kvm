@@ -507,7 +507,7 @@ bool HidController::SendKeyTap(const String& key) {
 
 bool HidController::SendKeyType(const String& text) {
   // Bound command runtime and BLE notification burst size.
-  if (text.length() == 0 || text.length() > 128) {
+  if (text.length() == 0 || text.length() > 200) {
     EmitInjectTelemetry("key.type", false, "invalid_text_length");
     return false;
   }
