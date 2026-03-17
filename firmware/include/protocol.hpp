@@ -11,6 +11,7 @@ namespace airkvm {
 enum class CommandType {
   Unknown,
   MouseMoveRel,
+  MouseMoveAbs,
   MouseClick,
   KeyTap,
   KeyType,

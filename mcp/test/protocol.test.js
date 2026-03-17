@@ -13,10 +13,21 @@ test('airkvm_mouse_move_rel build', () => {
   assert.deepEqual(getTool('airkvm_mouse_move_rel').build({ dx: 10, dy: -5 }), { type: 'mouse.move_rel', dx: 10, dy: -5 });
 });
 
+test('airkvm_mouse_move_abs build', () => {
+  assert.deepEqual(getTool('airkvm_mouse_move_abs').build({ x: 123, y: 456 }), { type: 'mouse.move_abs', x: 123, y: 456 });
+});
+
 test('validateArgs rejects airkvm_mouse_move_rel with missing fields', () => {
   const tool = getTool('airkvm_mouse_move_rel');
   assert.deepEqual(validateArgs(tool, { dx: 1 }), { ok: false, error: 'missing_required_field:dy' });
   assert.deepEqual(validateArgs(tool, {}), { ok: false, error: 'missing_required_field:dx' });
+});
+
+test('validateArgs rejects airkvm_mouse_move_abs with missing or out-of-range fields', () => {
+  const tool = getTool('airkvm_mouse_move_abs');
+  assert.deepEqual(validateArgs(tool, { x: 1 }), { ok: false, error: 'missing_required_field:y' });
+  assert.deepEqual(validateArgs(tool, { x: -1, y: 0 }), { ok: false, error: 'out_of_range:x' });
+  assert.deepEqual(validateArgs(tool, { x: 0, y: 32768 }), { ok: false, error: 'out_of_range:y' });
 });
 
 test('validateArgs rejects airkvm_mouse_move_rel with non-integer', () => {
@@ -76,7 +87,7 @@ test('target is set correctly on all tools', () => {
     'airkvm_fw_version_request', 'airkvm_transfer_reset']) {
     assert.equal(getTool(name).target, 'fw', `expected ${name} to have target: 'fw'`);
   }
-  for (const name of ['airkvm_mouse_move_rel',
+  for (const name of ['airkvm_mouse_move_rel', 'airkvm_mouse_move_abs',
     'airkvm_mouse_click', 'airkvm_key_tap', 'airkvm_key_type']) {
     assert.equal(getTool(name).target, 'hid', `expected ${name} to have target: 'hid'`);
   }

@@ -10,6 +10,14 @@ void test_parse_mouse_move_rel() {
   TEST_ASSERT_EQUAL(-4, cmd->dy);
 }
 
+void test_parse_mouse_move_abs() {
+  const auto cmd = airkvm::ParseCommandLine("{\"type\":\"mouse.move_abs\",\"x\":1234,\"y\":5678}");
+  TEST_ASSERT_TRUE(cmd.has_value());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(airkvm::CommandType::MouseMoveAbs), static_cast<int>(cmd->type));
+  TEST_ASSERT_EQUAL(1234, cmd->x);
+  TEST_ASSERT_EQUAL(5678, cmd->y);
+}
+
 void test_parse_key_tap() {
   const auto cmd = airkvm::ParseCommandLine("{\"type\":\"key.tap\",\"key\":\"Enter\"}");
   TEST_ASSERT_TRUE(cmd.has_value());
@@ -64,6 +72,7 @@ void test_ack_json_error() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_mouse_move_rel);
+  RUN_TEST(test_parse_mouse_move_abs);
   RUN_TEST(test_parse_key_tap);
   RUN_TEST(test_parse_key_type);
   RUN_TEST(test_parse_key_type_escaped_text);

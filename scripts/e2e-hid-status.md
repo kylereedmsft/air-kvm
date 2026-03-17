@@ -14,10 +14,12 @@ The current blocker is no longer transport correctness. It is HID targeting accu
 ## Current status
 Transport and routing are working.
 
-The remaining failure is HID calibration / targeting:
-- closed-loop browser-guided targeting works on a controlled calibration popup
-- open-loop targeting from the learned model still misses badly on larger moves
-- the strongest current hypothesis is nonlinear desktop pointer behavior, likely mouse acceleration or similar OS-side scaling
+The current state is:
+- relative-mode HID is not reliable enough for open-loop page targeting
+- absolute mouse HID descriptor was ignored by the host
+- absolute digitizer-style HID descriptor is honored by the host
+- popup-local absolute calibration works very well
+- transferring that calibration to the real browser tab is still the blocker
 
 ## What is fixed
 
@@ -136,6 +138,8 @@ New calibration assets:
 - `extension/src/calibration.js`
 - `scripts/calibration-home.mjs`
 - `scripts/calibration-probe.mjs`
+- `scripts/calibration-abs-home.mjs`
+- `scripts/calibration-abs-probe.mjs`
 
 Current calibration popup behavior:
 - controlled popup window opened by the extension
@@ -144,6 +148,7 @@ Current calibration popup behavior:
 - centered `DONE` button
 - repeated pointer event reporting
 - `DONE` click reporting with actual click coordinates
+- popup closes itself after a successful `DONE` click
 
 Service worker calibration state now includes:
 - latest pointer event
@@ -158,6 +163,96 @@ Relevant files:
 - `extension/src/calibration.html`
 - `extension/src/calibration.js`
 - `mcp/src/protocol.js`
+- `firmware/src/hid_controller.cpp`
+- `scripts/e2e-hid.mjs`
+
+## Absolute HID findings
+
+### Absolute mouse descriptor: failed
+The first absolute HID experiment used a Generic Desktop mouse-style absolute report.
+
+Observed result:
+- firmware accepted `mouse.move_abs`
+- host/browser ignored it
+- calibration popup saw no pointer movement
+
+Conclusion:
+- this descriptor shape is not usable for absolute positioning on this machine
+
+### Digitizer-style absolute descriptor: works
+The firmware was changed to expose a digitizer/pen-style absolute report alongside the existing relative path.
+
+Observed result:
+- after forgetting and re-pairing the HID device, absolute moves started affecting the browser
+- midpoint and bounded probes produced browser-visible pointer events
+
+Conclusion:
+- the host honors the digitizer-style absolute report
+- absolute mode is viable in principle in this stack
+
+### Popup-local boundary calibration: works
+The best current calibration strategy is:
+- open a large extension popup
+- scan in from left/right/top/bottom until the popup first sees the cursor
+- use those four entry hits to build a local popup mapping
+
+This works well enough that the popup test can now:
+- hit all four popup corner targets open-loop
+- hit the popup `DONE` button center open-loop
+
+One successful live run:
+- coarse bounds:
+  - left `x=1024` -> `client_x=16`
+  - right `x=30719` -> `client_x=1386`
+  - top `y=3072` -> `client_y=26`
+  - bottom `y=29695` -> `client_y=823`
+- open-loop corner hits:
+  - `corner_tl` -> `49,49`
+  - `corner_tr` -> `1351,49`
+  - `corner_bl` -> `49,809`
+  - `corner_br` -> `1351,809`
+- open-loop `DONE`:
+  - target `700,518`
+  - landed `700,518`
+  - offset `0,0`
+
+Interpretation:
+- popup-local absolute calibration is currently the strongest working result
+- coarse edge entry is sufficient; exact edge refinement is not required
+
+### Naive full-screen mapping from resolution: failed
+The machine resolution was provided as `3024 × 1964`.
+
+A direct screen model was then tested:
+- `hid_x ≈ screen_x * 32767 / 3024`
+- `hid_y ≈ screen_y * 32767 / 1964`
+
+Observed popup result:
+- expected `DONE` screen position missed badly
+- popup logged `calibration done screen error: (-366, -283)`
+- the move landed at popup `client = 334,216` instead of `DONE`
+
+Interpretation:
+- the host is not mapping the digitizer absolute range as a simple full-desktop linear `3024×1964 -> 0..32767`
+- popup-local calibration is stronger than a naive whole-screen model
+
+### Real-tab transfer is still the blocker
+`scripts/e2e-hid.mjs` now includes:
+- absolute popup calibration
+- popup `DONE` click/close
+- reuse of the learned calibration for real-tab button and textarea targets
+
+What works in the real tab:
+- textarea focus
+- `key.type`
+- final textarea contains printable ASCII
+
+What still fails:
+- all 4 button-click assertions
+
+This means:
+- absolute targeting is good enough to acquire the page and focus the textarea
+- it is still not good enough, or not yet projected correctly, for the smaller button targets in the real tab
 
 ## What calibration can do today
 
@@ -173,91 +268,62 @@ This is now reliable enough to prove:
 - browser-content acquisition is possible
 - local correction works
 
-### Open-loop targeting: still fails
-This is the most important current result.
+### Relative open-loop transfer: still fails
+The earlier relative-mode four-corner calibration proved:
+- closed-loop correction can work on the popup
+- frozen open-loop transfer still misses badly
 
-After a full four-corner calibration pass, the script now freezes the learned model and tries one single open-loop move to `DONE`, then clicks without correction.
-
-Latest live result:
-- starting point before open-loop shot: `847,623`
-- `DONE` center: `450,392`
-- requested move: `dx=-265`, `dy=-154`
-- actual landed/clicked point: `587,480`
-- offset from center: `+137`, `+88`
-- `done_clicked` stayed `false`
-
-Interpretation:
-- the current model is good enough for local closed-loop correction
-- it is not good enough to transfer as a global open-loop mapping
+That remains true, but the project has now moved past relative mode as the main path.
 
 ## Leading hypothesis
-The leading hypothesis is nonlinear pointer behavior on macOS, likely mouse acceleration or a similar OS-side transform.
+The current leading hypothesis is:
+- absolute popup calibration is good
+- the remaining error is in projecting real-tab document/client coordinates into the same screen-space model that the popup calibration learned
 
 Why this fits the evidence:
-- small local moves behave much more predictably than large moves
-- effective gain changes over the course of the path
-- a model that works locally near a target does not transfer to a larger open-loop move
-- corner-to-corner movement and center targeting do not share one stable global linear scale
+- popup-local open-loop targeting can be exact
+- the same general calibration does not yet activate the real-tab buttons
+- textarea focus is forgiving enough to still work
+- a naive full-screen `3024×1964` mapping is measurably wrong
+- real-tab geometry is still likely suffering from browser chrome/content-origin uncertainty
 
-Important nuance:
-- some short probes looked roughly linear over limited move sizes
-- the full corner-walk + open-loop transfer test shows that global linearity does not hold well enough for the real problem
-
-So the working assumption now should be:
-- local linearity is usable
-- global linearity is not
-
-### Update: pointer acceleration disabled
-Pointer acceleration was disabled and the open-loop calibration test was rerun.
-
-What improved:
-- the corner-walk gains became much more stable
-- the model settled around roughly `x ≈ 0.6875`, `y ≈ 0.6897`
-
-What did not improve:
-- the frozen open-loop shot to `DONE` still missed badly
-
-Latest live result with acceleration disabled:
-- start before open-loop shot: `831,623`
-- `DONE` center: `450,392`
-- requested move: `dx=-254`, `dy=-154`
-- actual landed/clicked point: `657,517`
-- offset from center: `+207`, `+125`
-- `done_clicked` stayed `false`
-
-Interpretation:
-- disabling acceleration improves local consistency
-- it does not make the current four-corner model transfer correctly to a long open-loop move
-- so acceleration may be part of the story, but it is not the whole story
+Earlier relative-mode evidence about acceleration/nonlinearity is still useful background, but the newest absolute-mode data points more strongly at a geometry/projection mismatch than at pure HID nonlinearity.
 
 ## Current state of `scripts/e2e-hid.mjs`
 
 What is true now:
 - request/response routing is no longer the blocker
-- the test still does not have a reliable focus-and-target strategy for the real tab
-- calibration work is happening in `scripts/calibration-home.mjs`, not yet folded back into the real HID test
+- the test now includes popup-based absolute calibration
+- the popup calibration result is being fed into real-tab targeting
+- the remaining failure is still the real-tab button clicks
 
-The real remaining problem is:
-- how to transfer calibration knowledge from the controlled popup to the real browser tab without browser feedback during the HID phase
+Safety rule now enforced:
+- do not click during calibration unless the latest popup-reported cursor position is confirmed inside the intended target
+- if the cursor appears to start inside the popup, abort calibration instead of continuing
+- this prevents bad calibration runs from clicking the desktop and moving windows
 
 ## Recommended next steps
 
-### 1. Treat this as a nonlinear control problem
-Do not assume one global X/Y scale.
+### 1. Instrument real-tab click landing
+Before changing the math again, keep collecting direct evidence about what the real clicks are hitting:
+- clicked element id
+- clicked text
+- last click position if possible
 
-Instead:
-- keep using bounded moves
-- update the model continuously from observed results
-- expect different behavior for larger moves
+### 2. Improve real-tab screen projection
+The next real technical problem is:
+- translating real-tab DOM/client coordinates into the same screen-space model learned from the popup
 
-### 2. Decide whether true open-loop HID is required
-If the real tab cannot provide feedback during HID, then:
-- OS acceleration may make precise open-loop targeting fundamentally fragile
+That likely means:
+- comparing popup-reported `screenX/screenY` against expected screen positions
+- tightening browser chrome/content-origin handling
+- avoiding stale assumptions from `window_bounds + toolbarHeight`
 
-Possible escape hatches:
-- disable mouse acceleration on the target machine
-- use a target-specific browser feedback surface near the final action
-- introduce a browser-visible re-anchor step close to the real target before the final click
+### 3. Keep popup calibration coarse and safe
+The popup work is already good enough:
+- coarse boundary entry works
+- exact edge refinement is unnecessary
+- safety gates should remain in place so bad calibration runs abort instead of clicking the desktop
 
 ### 3. If continuing with calibration, test gain vs move magnitude explicitly
 `scripts/calibration-probe.mjs` exists for this purpose.

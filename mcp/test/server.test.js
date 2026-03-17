@@ -24,6 +24,7 @@ test('tools/list includes structured tools', () => {
   assert.deepEqual(names, [
     'airkvm_send',
     'airkvm_mouse_move_rel',
+    'airkvm_mouse_move_abs',
     'airkvm_mouse_click',
     'airkvm_key_tap',
     'airkvm_key_type',

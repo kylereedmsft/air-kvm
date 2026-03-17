@@ -52,7 +52,11 @@ function reportDoneClick(event) {
       page_x: Math.round(event.pageX),
       page_y: Math.round(event.pageY)
     } : null
-  }).catch(() => {});
+  }).catch(() => {}).finally(() => {
+    // Dismiss the calibration popup once the click is reported so the test can
+    // immediately continue against the underlying browser window.
+    setTimeout(() => window.close(), 80);
+  });
 }
 
 function reportLayout() {

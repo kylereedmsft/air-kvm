@@ -77,6 +77,12 @@ std::optional<Command> ParseCommandLine(const std::string& line) {
     cmd.dy = ExtractInt(line, "dy", 0);
     return cmd;
   }
+  if (Contains(line, R"("type":"mouse.move_abs")")) {
+    cmd.type = CommandType::MouseMoveAbs;
+    cmd.x = ExtractInt(line, "x", 0);
+    cmd.y = ExtractInt(line, "y", 0);
+    return cmd;
+  }
   if (Contains(line, R"("type":"mouse.click")")) {
     cmd.type = CommandType::MouseClick;
     cmd.button = ExtractString(line, "button");

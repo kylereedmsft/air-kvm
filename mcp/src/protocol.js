@@ -57,6 +57,20 @@ const TOOL_DEFINITIONS = [
     build: (args) => ({ type: 'mouse.move_rel', dx: args.dx, dy: args.dy })
   },
   {
+    name: 'airkvm_mouse_move_abs',
+    target: 'hid',
+    description: 'Move the mouse to an absolute coordinate in the target HID absolute range (0..32767).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        x: { type: 'integer', minimum: 0, maximum: 32767 },
+        y: { type: 'integer', minimum: 0, maximum: 32767 }
+      },
+      required: ['x', 'y']
+    },
+    build: (args) => ({ type: 'mouse.move_abs', x: args.x, y: args.y })
+  },
+  {
     name: 'airkvm_mouse_click',
     target: 'hid',
     description: 'Click a mouse button on the target machine.',

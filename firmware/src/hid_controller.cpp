@@ -13,7 +13,7 @@ namespace {
 // press/release as a distinct event and key-repeat does not latch.
 constexpr unsigned long kHidReportDelayMs = 12;
 
-// Keyboard report (ID 1) + mouse report (ID 2).
+// Keyboard report (ID 1) + relative mouse report (ID 2) + absolute pointer report (ID 3).
 const uint8_t kHidReportMap[] = {
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x06,        // Usage (Keyboard)
@@ -67,12 +67,41 @@ const uint8_t kHidReportMap[] = {
     0x95, 0x03,        //     Report Count (3)
     0x81, 0x06,        //     Input (Data,Var,Rel)
     0xC0,              //   End Collection
+    0xC0,              // End Collection
+
+    0x05, 0x0D,        // Usage Page (Digitizers)
+    0x09, 0x02,        // Usage (Pen)
+    0xA1, 0x01,        // Collection (Application)
+    0x85, 0x03,        //   Report ID (3)
+    0x09, 0x20,        //   Usage (Stylus)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x09, 0x42,        //     Usage (Tip Switch)
+    0x09, 0x32,        //     Usage (In Range)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x75, 0x01,        //     Report Size (1)
+    0x95, 0x02,        //     Report Count (2)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
+    0x95, 0x01,        //     Report Count (1)
+    0x75, 0x06,        //     Report Size (6)
+    0x81, 0x01,        //     Input (Const,Array,Abs)
+    0x05, 0x01,        //     Usage Page (Generic Desktop)
+    0x09, 0x30,        //     Usage (X)
+    0x09, 0x31,        //     Usage (Y)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x7F,  //     Logical Maximum (32767)
+    0x75, 0x10,        //     Report Size (16)
+    0x95, 0x02,        //     Report Count (2)
+    0x81, 0x02,        //     Input (Data,Var,Abs)
+    0xC0,              //   End Collection
     0xC0               // End Collection
 };
 
 constexpr uint8_t kKeyboardReportId = 1;
 constexpr uint8_t kMouseReportId = 2;
+constexpr uint8_t kMouseAbsReportId = 3;
 constexpr int kMaxMouseMoveSteps = 512;
+constexpr uint16_t kMouseAbsMax = 32767;
 
 struct KeyAlias {
   const char* name;
@@ -446,6 +475,7 @@ void HidController::Setup(NimBLEServer* server, NimBLEAdvertising* advertising) 
   hid_device_ = new NimBLEHIDDevice(server);
   keyboard_input_ = hid_device_->inputReport(kKeyboardReportId);
   mouse_input_ = hid_device_->inputReport(kMouseReportId);
+  mouse_abs_input_ = hid_device_->inputReport(kMouseAbsReportId);
 
   hid_device_->manufacturer("air-kvm");
   hid_device_->pnp(0x02, 0x045E, 0x0001, 0x0110);
@@ -468,6 +498,12 @@ bool HidController::SendMouseMoveRel(int dx, int dy) {
       "mouse.move_rel",
       ok,
       ok ? nullptr : (step_cap_exceeded ? "step_cap_exceeded" : "notify_failed"));
+  return ok;
+}
+
+bool HidController::SendMouseMoveAbs(int x, int y) {
+  const bool ok = NotifyMouseAbs(0, x, y);
+  EmitInjectTelemetry("mouse.move_abs", ok, ok ? nullptr : "notify_failed");
   return ok;
 }
 
@@ -596,6 +632,16 @@ int8_t HidController::ClampAxis(int value) {
   return static_cast<int8_t>(value);
 }
 
+uint16_t HidController::ClampAbsAxis(int value) {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > static_cast<int>(kMouseAbsMax)) {
+    return kMouseAbsMax;
+  }
+  return static_cast<uint16_t>(value);
+}
+
 uint8_t HidController::ButtonMask(const String& button) {
   if (button == "left") {
     return 0x01;
@@ -657,6 +703,29 @@ bool HidController::NotifyMouse(uint8_t buttons, int dx, int dy, int wheel) {
   };
   mouse_input_->setValue(report, sizeof(report));
   mouse_input_->notify();
+  return true;
+}
+
+bool HidController::NotifyMouseAbs(uint8_t buttons, int x, int y) {
+  if (mouse_abs_input_ == nullptr) {
+    return false;
+  }
+
+  const uint16_t abs_x = ClampAbsAxis(x);
+  const uint16_t abs_y = ClampAbsAxis(y);
+  uint8_t flags = 0x02;  // In Range
+  if ((buttons & 0x01) != 0) {
+    flags |= 0x01;  // Tip Switch
+  }
+  uint8_t report[5] = {
+      flags,
+      static_cast<uint8_t>(abs_x & 0xFF),
+      static_cast<uint8_t>((abs_x >> 8) & 0xFF),
+      static_cast<uint8_t>(abs_y & 0xFF),
+      static_cast<uint8_t>((abs_y >> 8) & 0xFF),
+  };
+  mouse_abs_input_->setValue(report, sizeof(report));
+  mouse_abs_input_->notify();
   return true;
 }
 

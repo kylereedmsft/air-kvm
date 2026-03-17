@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { getTool, validateArgs } from '../src/protocol.js';
 
 test('screenshot and browser tools build correct commands', () => {
+  const mouseAbs = getTool('airkvm_mouse_move_abs').build({ x: 1024, y: 2048 });
   const tab = getTool('airkvm_screenshot_tab').build({
     request_id: 'r1',
     max_width: 800,
@@ -41,6 +42,7 @@ test('screenshot and browser tools build correct commands', () => {
     max_result_chars: 256
   });
 
+  assert.deepEqual(mouseAbs, { type: 'mouse.move_abs', x: 1024, y: 2048 });
   assert.deepEqual(tab, {
     type: 'screenshot.request', source: 'tab', request_id: 'r1',
     max_width: 800, max_height: 450, quality: 0.5, max_chars: 70000, tab_id: 123, encoding: 'bin'
