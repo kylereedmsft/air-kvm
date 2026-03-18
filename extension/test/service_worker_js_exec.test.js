@@ -20,6 +20,7 @@ function makeHarness() {
   const tabCaptureCalls = [];
   const desktopCaptureCalls = [];
   let jsExecEvalImpl = async () => ({ ok: true, value_type: 'number', value_json: '1', truncated: false });
+  let jsInjectImpl = async () => ({ ok: true, value_type: 'number', value_json: '1', truncated: false });
   let domSummaryEvalImpl = async () => ({
     __airkvm_dom_summary: true,
     url: 'https://example.com',
@@ -161,6 +162,9 @@ function makeHarness() {
     scripting: {
       executeScript: async (opts) => {
         scriptingCalls.push(opts);
+        if (typeof opts?.func === 'function' && Array.isArray(opts?.args) && opts.args.length === 2) {
+          return [{ result: await jsInjectImpl(opts) }];
+        }
         return [{
           result: {
             device_pixel_ratio: 2,
@@ -275,6 +279,9 @@ function makeHarness() {
     setJsExecEvalImpl: (impl) => {
       jsExecEvalImpl = impl;
     },
+    setJsInjectImpl: (impl) => {
+      jsInjectImpl = impl;
+    },
     setDomSummaryEvalImpl: (impl) => {
       domSummaryEvalImpl = impl;
     },
@@ -388,6 +395,39 @@ test('service worker handles js.exec.request and posts js.exec.result via bridge
   assert.equal(resultPayload.request_id, 'js-1');
   assert.equal(resultPayload.value_type, 'string');
   assert.equal(resultPayload.value_json, '"ok"');
+  assert.equal(resultPayload.truncated, false);
+});
+
+test('service worker handles js.inject.request and posts js.inject.result via bridge', async () => {
+  const harness = makeHarness();
+  await importServiceWorkerFresh();
+
+  harness.setJsInjectImpl(async () => ({
+    ok: true,
+    value_type: 'string',
+    value_json: '"silent"',
+    truncated: false
+  }));
+
+  const listener = findBleCommandListener(harness.runtimeListeners, harness);
+  const { returned, response } = await callBleCommand(listener, {
+    type: 'js.inject.request',
+    request_id: 'inj-1',
+    script: JSON.stringify({ __airkvm_inject: true, op: 'hid_fixture.read' }),
+    timeout_ms: 300,
+    max_result_chars: 200
+  });
+
+  assert.equal(returned, true);
+  assert.deepEqual(response, { ok: true });
+  assert.equal(harness.cdpCommandCalls.filter((entry) => entry.method === 'Runtime.evaluate').length, 0);
+  assert.equal(harness.scriptingCalls.length > 0, true);
+
+  const resultPayload = harness.postedPayloads.find((payload) => payload?.type === 'js.inject.result');
+  assert.equal(Boolean(resultPayload), true);
+  assert.equal(resultPayload.request_id, 'inj-1');
+  assert.equal(resultPayload.value_type, 'string');
+  assert.equal(resultPayload.value_json, '"silent"');
   assert.equal(resultPayload.truncated, false);
 });
 
@@ -613,6 +653,21 @@ test('service worker returns invalid_js_exec_request for empty script', async ()
   assert.equal(payload?.error_code, 'invalid_js_exec_request');
 });
 
+test('service worker returns invalid_js_inject_request for empty script', async () => {
+  const harness = makeHarness();
+  await importServiceWorkerFresh();
+  const listener = findBleCommandListener(harness.runtimeListeners, harness);
+  await callBleCommand(listener, {
+    type: 'js.inject.request',
+    request_id: 'inj-invalid',
+    script: ''
+  });
+
+  const payload = harness.postedPayloads.find((entry) => entry?.request_id === 'inj-invalid');
+  assert.equal(payload?.type, 'js.inject.error');
+  assert.equal(payload?.error_code, 'invalid_js_inject_request');
+});
+
 test('service worker maps runtime script failures to js_exec_runtime_error', async () => {
   const harness = makeHarness();
   await importServiceWorkerFresh();
@@ -735,10 +790,10 @@ test('service worker handles window.bounds.request and posts window.bounds via b
   assert.equal(payload?.tab_id, 9);
   assert.equal(payload?.window_id, 1);
   assert.deepEqual(payload?.bounds, {
-    left: 120,
-    top: 60,
-    width: 1280,
-    height: 900,
+    left: 130,
+    top: 70,
+    width: 1200,
+    height: 860,
     window_state: 'normal'
   });
   assert.equal(payload?.screen?.device_pixel_ratio, 2);
@@ -748,7 +803,7 @@ test('service worker handles window.bounds.request and posts window.bounds via b
   assert.equal(payload?.screen?.viewport?.screen_y, 57);
   assert.equal(harness.scriptingCalls.length, 1);
   const cdpCall = harness.cdpCommandCalls.find((entry) => entry.method === 'Browser.getWindowForTarget');
-  assert.equal(Boolean(cdpCall), true);
+  assert.equal(cdpCall, undefined);
 });
 
 test('service worker falls back to chrome.windows.get when Browser.getWindowForTarget is unavailable', async () => {

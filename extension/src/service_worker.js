@@ -461,9 +461,200 @@ async function executeScriptViaCdp(tabId, script, maxResultChars) {
   });
 }
 
+async function executeScriptViaInjection(tabId, script, maxResultChars) {
+  if (!chrome?.scripting?.executeScript) {
+    throw new Error('scripting_unavailable');
+  }
+  let request = null;
+  try {
+    request = JSON.parse(String(script || ''));
+  } catch {
+    throw new Error('invalid_js_inject_request');
+  }
+  if (!request || request.__airkvm_inject !== true || typeof request.op !== 'string') {
+    throw new Error('invalid_js_inject_request');
+  }
+  const [result] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (injectRequest, injectedMaxChars) => {
+      function valueTypeOf(value) {
+        if (value === null) return 'null';
+        if (Array.isArray(value)) return 'array';
+        return typeof value;
+      }
+      function safeSerialize(value) {
+        const seen = new WeakSet();
+        const typedLiteral = (kind, payload = null) => JSON.stringify({
+          __airkvm_type: kind,
+          value: payload
+        });
+        if (typeof value === 'undefined') return typedLiteral('undefined');
+        if (typeof value === 'function') return typedLiteral('function', value.name || null);
+        if (typeof value === 'symbol') return typedLiteral('symbol', String(value));
+        if (typeof value === 'bigint') return typedLiteral('bigint', value.toString());
+        try {
+          const encoded = JSON.stringify(value, (_key, candidate) => {
+            if (typeof candidate === 'undefined') return { __airkvm_type: 'undefined' };
+            if (typeof candidate === 'function') {
+              return { __airkvm_type: 'function', value: candidate.name || null };
+            }
+            if (typeof candidate === 'symbol') return { __airkvm_type: 'symbol', value: String(candidate) };
+            if (typeof candidate === 'bigint') return { __airkvm_type: 'bigint', value: candidate.toString() };
+            if (candidate && typeof candidate === 'object') {
+              if (seen.has(candidate)) return { __airkvm_type: 'circular' };
+              seen.add(candidate);
+            }
+            return candidate;
+          });
+          return typeof encoded === 'string' ? encoded : 'null';
+        } catch (err) {
+          return typedLiteral('unserializable', String(err?.message || err));
+        }
+      }
+      function recordClick(targetId, targetText) {
+        const stateEl = document.getElementById('airkvm-hid-click-state');
+        if (!stateEl) return;
+        let state = { clicks: [], lastClick: null };
+        try {
+          state = JSON.parse(stateEl.textContent || '{"clicks":[],"lastClick":null}');
+        } catch {
+          state = { clicks: [], lastClick: null };
+        }
+        state.lastClick = { id: targetId, text: targetText };
+        state.clicks.push(state.lastClick);
+        stateEl.textContent = JSON.stringify(state);
+      }
+
+      try {
+        let value = null;
+        if (injectRequest.op === 'hid_fixture.inject') {
+          const old = document.getElementById('airkvm-hid-fixture');
+          if (old) old.parentNode.removeChild(old);
+
+          const fixture = document.createElement('div');
+          fixture.id = 'airkvm-hid-fixture';
+          fixture.style.cssText = 'position:fixed;top:20px;left:20px;z-index:999999;background:#fff;padding:16px;border:2px solid #333;font-family:monospace;';
+
+          const textarea = document.createElement('textarea');
+          textarea.id = 'airkvm-hid-output';
+          textarea.rows = 8;
+          textarea.cols = 60;
+          textarea.style.cssText = 'display:block;margin-bottom:8px;font-size:12px;';
+          textarea.addEventListener('click', () => recordClick('airkvm-hid-output', 'textarea'));
+          fixture.appendChild(textarea);
+
+          const log = document.createElement('pre');
+          log.id = 'airkvm-hid-log';
+          log.style.cssText = 'display:block;margin:0 0 8px 0;padding:8px;border:1px solid #999;min-height:5em;background:#f6f6f6;font-size:12px;white-space:pre-wrap;';
+          fixture.appendChild(log);
+
+          const btnRow = document.createElement('div');
+          btnRow.style.cssText = 'display:flex;gap:8px;margin-bottom:8px;';
+          for (let i = 1; i <= 4; i += 1) {
+            const btn = document.createElement('button');
+            btn.id = `airkvm-hid-btn-${i}`;
+            btn.textContent = `Button ${i}`;
+            btn.style.cssText = 'padding:8px 16px;font-size:14px;cursor:pointer;';
+            btn.addEventListener('click', () => {
+              recordClick(btn.id, btn.textContent || '');
+              const outputLog = document.getElementById('airkvm-hid-log');
+              if (outputLog) outputLog.textContent += `Button ${i} Pressed\n`;
+            });
+            btnRow.appendChild(btn);
+          }
+          fixture.appendChild(btnRow);
+          fixture.addEventListener('click', (event) => {
+            if (event.target === fixture || event.target === btnRow) {
+              const target = event.target;
+              recordClick(target.id || 'fixture-container', target.textContent || '');
+            }
+          });
+
+          const stateEl = document.createElement('script');
+          stateEl.id = 'airkvm-hid-click-state';
+          stateEl.type = 'application/json';
+          stateEl.textContent = JSON.stringify({ clicks: [], lastClick: null });
+          fixture.appendChild(stateEl);
+
+          document.body.appendChild(fixture);
+          value = 'injected';
+        } else if (injectRequest.op === 'hid_fixture.layout') {
+          function rect(id) {
+            const el = document.getElementById(id);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { left: r.left, top: r.top, width: r.width, height: r.height };
+          }
+          value = {
+            toolbarHeight: window.outerHeight - window.innerHeight,
+            btn1: rect('airkvm-hid-btn-1'),
+            btn2: rect('airkvm-hid-btn-2'),
+            btn3: rect('airkvm-hid-btn-3'),
+            btn4: rect('airkvm-hid-btn-4'),
+            textarea: rect('airkvm-hid-output')
+          };
+        } else if (injectRequest.op === 'hid_fixture.read') {
+          const el = document.getElementById('airkvm-hid-output');
+          const log = document.getElementById('airkvm-hid-log');
+          const stateEl = document.getElementById('airkvm-hid-click-state');
+          let hidState = null;
+          try {
+            hidState = stateEl ? JSON.parse(stateEl.textContent || 'null') : null;
+          } catch {
+            hidState = null;
+          }
+          value = {
+            value: el ? el.value : null,
+            log: log ? log.textContent : null,
+            hid: hidState
+          };
+        } else {
+          return {
+            ok: false,
+            error_code: 'js_inject_unsupported',
+            error: `unsupported_inject_op:${injectRequest.op}`
+          };
+        }
+        let valueJson = safeSerialize(value);
+        let truncated = false;
+        if (valueJson.length > injectedMaxChars) {
+          valueJson = valueJson.slice(0, injectedMaxChars);
+          truncated = true;
+        }
+        return {
+          ok: true,
+          value_type: valueTypeOf(value),
+          value_json: valueJson,
+          truncated
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          error_code: 'js_inject_runtime_error',
+          error: String(err?.message || err)
+        };
+      }
+    },
+    args: [request, maxResultChars]
+  });
+  return result?.result ?? null;
+}
+
 async function postJsExecError(requestId, tabId, startedAt, errorCode, message) {
   await sendViaHalfPipe({
     type: 'js.exec.error',
+    request_id: requestId || null,
+    tab_id: Number.isInteger(tabId) ? tabId : null,
+    duration_ms: Math.max(0, Date.now() - startedAt),
+    error_code: errorCode,
+    error: clipText(message || errorCode),
+    ts: Date.now()
+  });
+}
+
+async function postJsInjectError(requestId, tabId, startedAt, errorCode, message) {
+  await sendViaHalfPipe({
+    type: 'js.inject.error',
     request_id: requestId || null,
     tab_id: Number.isInteger(tabId) ? tabId : null,
     duration_ms: Math.max(0, Date.now() - startedAt),
@@ -556,6 +747,65 @@ async function sendJsExec(command) {
     if (!keepLockedUntilScriptSettles) {
       jsExecInFlight = false;
     }
+  }
+}
+
+async function sendJsInject(command) {
+  const startedAt = Date.now();
+  let requestId = command?.request_id || makeRequestId();
+  let resolvedTabId = Number.isInteger(command?.tab_id) ? command.tab_id : null;
+  try {
+    const script = typeof command?.script === 'string' ? command.script : '';
+    if (!script) throw new Error('invalid_js_inject_request');
+    const normalized = normalizeJsExecCommand({ ...command, script });
+    requestId = normalized.requestId;
+    resolvedTabId = normalized.tabId;
+    const tab = await resolveTargetTab(normalized.tabId);
+    if (!tab?.id) {
+      throw new Error('active_tab_not_found');
+    }
+    resolvedTabId = tab.id;
+    lastAutomationTabId = tab.id;
+    const result = await withTimeout(
+      executeScriptViaInjection(tab.id, normalized.script, normalized.maxResultChars),
+      normalized.timeoutMs,
+      'js_inject_timeout'
+    );
+    if (!result || typeof result !== 'object') {
+      throw new Error('js_inject_invalid_result');
+    }
+    if (result.ok !== true) {
+      await postJsInjectError(
+        requestId,
+        resolvedTabId,
+        startedAt,
+        result.error_code || 'js_inject_failed',
+        result.error || result.error_code || 'js_inject_failed'
+      );
+      return;
+    }
+    await sendViaHalfPipe({
+      type: 'js.inject.result',
+      request_id: requestId,
+      tab_id: resolvedTabId,
+      duration_ms: Math.max(0, Date.now() - startedAt),
+      value_type: typeof result.value_type === 'string' ? result.value_type : 'unknown',
+      value_json: typeof result.value_json === 'string' ? result.value_json : 'null',
+      truncated: Boolean(result.truncated),
+      ts: Date.now()
+    });
+  } catch (err) {
+    const detail = String(err?.message || err);
+    const code = detail === 'js_inject_timeout'
+      ? 'js_inject_timeout'
+      : detail === 'active_tab_not_found'
+        ? 'js_inject_tab_not_found'
+        : detail === 'invalid_js_inject_request' || detail === 'invalid_js_exec_request'
+          ? 'invalid_js_inject_request'
+        : detail === 'scripting_unavailable'
+            ? 'js_inject_unavailable'
+            : 'js_inject_failed';
+    await postJsInjectError(requestId, resolvedTabId, startedAt, code, detail);
   }
 }
 
@@ -1014,21 +1264,7 @@ async function sendWindowBounds(command) {
     throw new Error('active_tab_not_found');
   }
   lastAutomationTabId = tab.id;
-  let targetInfo = null;
-  try {
-    targetInfo = await withCdpSession(tab.id, async ({ sendCommand }) => {
-      const result = await sendCommand('Browser.getWindowForTarget');
-      return {
-        window_id: Number.isInteger(result?.windowId) ? result.windowId : null,
-        bounds: normalizeWindowBounds(result?.bounds || null)
-      };
-    });
-  } catch (err) {
-    if (!isMissingCdpMethodError(err, 'Browser.getWindowForTarget')) {
-      throw err;
-    }
-    targetInfo = await getWindowBoundsViaWindowsApi(tab);
-  }
+  const targetInfo = await getWindowBoundsViaWindowsApi(tab);
   const screen = await getWindowScreenMetrics(tab.id);
 
   await sendViaHalfPipe({
@@ -1188,6 +1424,22 @@ const kBleCommandHandlers = {
         type: 'bridge.logs.error',
         request_id: cmd.request_id || null,
         error: detail,
+        ts: Date.now()
+      });
+    }
+  ),
+  'js.inject.request': (command) => runBridgeHandler(
+    command,
+    'sendJsInject',
+    sendJsInject,
+    async (cmd, detail) => {
+      await sendViaHalfPipe({
+        type: 'js.inject.error',
+        request_id: cmd?.request_id || null,
+        tab_id: Number.isInteger(cmd?.tab_id) ? cmd.tab_id : null,
+        duration_ms: 0,
+        error_code: 'js_inject_failed',
+        error: clipText(detail || 'js_inject_failed'),
         ts: Date.now()
       });
     }

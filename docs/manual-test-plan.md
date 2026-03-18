@@ -325,6 +325,25 @@ node scripts/mcp-tool-call.mjs airkvm_exec_js_tab '{"request_id":"js-1","script"
 
 ---
 
+## T-14b — Inject JavaScript Silently
+
+**Purpose:** Verify JavaScript can be injected into the active tab without using the CDP-backed exec path.
+
+```bash
+node scripts/mcp-tool-call.mjs airkvm_inject_js_tab '{"request_id":"js-inject-1","script":"{\"__airkvm_inject\":true,\"op\":\"hid_fixture.read\"}"}'
+```
+
+**Expected response:**
+```json
+{ "value": null, "log": null, "hid": null }
+```
+
+**Pass criteria:**
+- Response arrives without debugger UI side effects
+- Response is structured JSON from the injected page-side helper
+
+---
+
 ## T-15 — Tab Screenshot
 
 **Purpose:** Verify a JPEG screenshot of the active tab is captured and returned.

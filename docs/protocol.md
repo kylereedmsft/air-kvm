@@ -297,8 +297,13 @@ determines the routing target and which HalfPipe method is used.
 | `airkvm_open_tab` | `tab.open.request` | `extension` | CHUNK |
 | `airkvm_dom_snapshot` | `dom.snapshot.request` | `extension` | CHUNK |
 | `airkvm_exec_js_tab` | `js.exec.request` | `extension` | CHUNK |
+| `airkvm_inject_js_tab` | `js.inject.request` | `extension` | CHUNK |
 | `airkvm_screenshot_tab` | `screenshot.request` | `extension` | CHUNK |
 | `airkvm_screenshot_desktop` | `screenshot.request` | `extension` | CHUNK |
+
+Notes:
+- `airkvm_exec_js_tab` is the CDP-backed path and may trigger debugger UI.
+- `airkvm_inject_js_tab` is the silent extension scripting path for deterministic DOM setup/readback.
 
 ## 8) HID Support
 

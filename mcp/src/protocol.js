@@ -187,7 +187,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_window_bounds',
     target: 'extension',
-    description: 'Get browser window bounds in desktop coordinates for the target tab.',
+    description: 'Get browser window bounds plus logical screen and viewport metrics for the target tab.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -264,7 +264,7 @@ const TOOL_DEFINITIONS = [
   {
     name: 'airkvm_exec_js_tab',
     target: 'extension',
-    description: 'Execute JavaScript in the target browser tab over the AirKVM transport.',
+    description: 'Execute JavaScript in the target browser tab via CDP. May affect page layout due to debugger UI.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -278,6 +278,29 @@ const TOOL_DEFINITIONS = [
     },
     build: (args) => {
       const command = { type: 'js.exec.request', request_id: reqId(args), script: args.script };
+      if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
+      if (Number.isInteger(args?.timeout_ms)) command.timeout_ms = args.timeout_ms;
+      if (Number.isInteger(args?.max_result_chars)) command.max_result_chars = args.max_result_chars;
+      return command;
+    }
+  },
+  {
+    name: 'airkvm_inject_js_tab',
+    target: 'extension',
+    description: 'Inject JavaScript in the target browser tab via the extension scripting API without attaching CDP. Preferred for silent UI-test setup and readback.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        request_id: { type: 'string' },
+        script: { type: 'string', minLength: 1, maxLength: 12000 },
+        tab_id: { type: 'integer' },
+        timeout_ms: { type: 'integer', minimum: 50, maximum: 2000 },
+        max_result_chars: { type: 'integer', minimum: 64, maximum: 700 }
+      },
+      required: ['request_id', 'script']
+    },
+    build: (args) => {
+      const command = { type: 'js.inject.request', request_id: reqId(args), script: args.script };
       if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
       if (Number.isInteger(args?.timeout_ms)) command.timeout_ms = args.timeout_ms;
       if (Number.isInteger(args?.max_result_chars)) command.max_result_chars = args.max_result_chars;

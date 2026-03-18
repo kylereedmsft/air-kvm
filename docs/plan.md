@@ -21,7 +21,7 @@ Maintain a reliable remote-control and browser-automation stack where:
 - All legacy `transfer.*` command types removed from protocol/parser/router.
 
 ### MCP
-- Structured tools: `airkvm_send`, `airkvm_list_tabs`, `airkvm_open_tab`, `airkvm_dom_snapshot`, `airkvm_exec_js_tab`, `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
+- Structured tools: `airkvm_send`, `airkvm_list_tabs`, `airkvm_open_tab`, `airkvm_dom_snapshot`, `airkvm_exec_js_tab`, `airkvm_inject_js_tab`, `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
 - UART parser supports mixed framed stream (`ctrl`, `log`, `bin`, and `bin_error`).
 - `sendRequest()`: sends commands and receives responses via HalfPipe transport (AK frame binary chunking).
 - `sendControlCommand()`: sends HID/firmware-local commands as CONTROL frames (type `0x02`) directly to UART — not via HalfPipe.
@@ -35,6 +35,16 @@ Maintain a reliable remote-control and browser-automation stack where:
 - Binary AK frame routing via `halfpipe.onFrame()` for ack/nack/reset handling.
 - `bleWrite()` helper consolidates postEvent/postBinary telemetry boilerplate.
 - All legacy inbound transfer code removed (inboundScriptTransfers, old transfer handlers).
+- `airkvm_exec_js_tab` remains the CDP-backed path for arbitrary evaluation and diagnostics.
+- `airkvm_inject_js_tab` is the silent `chrome.scripting.executeScript` path for UI-test setup/readback where debugger UI must not appear.
+
+### HID E2E
+- `scripts/e2e-hid.mjs` now passes end to end.
+- The working path uses:
+  - `airkvm_window_bounds` logical screen metrics
+  - absolute HID (`mouse.move_abs`) via the digitizer-style report
+  - `airkvm_inject_js_tab` for fixture inject, layout readback, and validation
+- The old popup calibration tooling has been removed.
 
 ---
 

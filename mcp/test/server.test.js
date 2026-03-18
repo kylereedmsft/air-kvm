@@ -40,6 +40,7 @@ test('tools/list includes structured tools', () => {
     'airkvm_open_window',
     'airkvm_dom_snapshot',
     'airkvm_exec_js_tab',
+    'airkvm_inject_js_tab',
     'airkvm_screenshot_tab',
     'airkvm_screenshot_desktop',
     'airkvm_bridge_logs'
@@ -236,6 +237,32 @@ test('airkvm_exec_js_tab returns structured json', async () => {
   const payload = JSON.parse(sent[0].result.content[0].text);
   assert.equal(payload.type, 'js.exec.result');
   assert.equal(payload.value_json, '"hello"');
+});
+
+test('airkvm_inject_js_tab returns structured json', async () => {
+  const { sent, server } = makeHarness({
+    send: async (command) => ({
+      ok: true,
+      data: {
+        type: 'js.inject.result',
+        request_id: command.request_id,
+        tab_id: 6,
+        duration_ms: 3,
+        value_type: 'string',
+        value_json: '"silent"',
+        truncated: false
+      }
+    }),
+  });
+  server.handleRequest({
+    jsonrpc: '2.0', id: 7,
+    method: 'tools/call',
+    params: { name: 'airkvm_inject_js_tab', arguments: { request_id: 'inj-1', script: 'return "silent"' } }
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  const payload = JSON.parse(sent[0].result.content[0].text);
+  assert.equal(payload.type, 'js.inject.result');
+  assert.equal(payload.value_json, '"silent"');
 });
 
 test('airkvm_dom_snapshot uses transport.send', async () => {

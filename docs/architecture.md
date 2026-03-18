@@ -34,8 +34,8 @@
 ### 2. MCP Server (`mcp/`)
 
 - Exposes tools: `airkvm_send`, `airkvm_list_tabs`, `airkvm_open_tab`,
-  `airkvm_dom_snapshot`, `airkvm_exec_js_tab`, `airkvm_screenshot_tab`,
-  `airkvm_screenshot_desktop`.
+  `airkvm_dom_snapshot`, `airkvm_exec_js_tab`, `airkvm_inject_js_tab`,
+  `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
 - Validates and forwards control commands to firmware via UART.
 - Parses mixed UART framed stream (control / log / binary).
 - **Half-pipe transport** (HalfPipe class): unified `send(obj)`/`onMessage(cb)` API for all message types, with automatic chunking via AK fram binary frames.
@@ -43,8 +43,10 @@
 
 ### 3. Extension (`extension/`)
 
-- `service_worker.js`: handles browser automation (tabs, DOM, js.exec, screenshots).
+- `service_worker.js`: handles browser automation (tabs, DOM, js.exec, js.inject, screenshots).
 - **Half-pipe transport** (HalfPipe class): sends screenshots and DOM snapshots, receives commands (js.exec) — all via AK frame binary chunks with `send(obj)`/`onMessage(cb)` API.
+- `js.exec`: CDP-backed path for arbitrary evaluation and diagnostics.
+- `js.inject`: silent `chrome.scripting.executeScript` path for deterministic DOM setup/readback.
 - `ble_bridge.html` + `ble_bridge.js`: BLE runtime context (Web Bluetooth).
 - `bridge.js`: BLE transport helper with `bleWrite()` for write-with-fallback and telemetry.
 
