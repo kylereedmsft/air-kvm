@@ -241,6 +241,67 @@ function buildFrameSummaryExpression(maxActionable) {
   })()`;
 }
 
+const kAxSnapshotInterestingRoles = new Set([
+  'textbox',
+  'searchbox',
+  'button',
+  'link',
+  'combobox',
+  'checkbox',
+  'radio button',
+  'menu item',
+  'menuitem',
+  'tab',
+  'option',
+  'listbox',
+  'heading',
+]);
+
+function axString(value) {
+  if (!value || typeof value !== 'object') return null;
+  if (typeof value.value === 'string') return value.value;
+  if (typeof value.value === 'number' || typeof value.value === 'boolean') return String(value.value);
+  return null;
+}
+
+function rectFromBoxModel(boxModel) {
+  const quad = Array.isArray(boxModel?.border) ? boxModel.border
+    : (Array.isArray(boxModel?.content) ? boxModel.content : null);
+  if (!quad || quad.length < 8) return null;
+  const xs = [quad[0], quad[2], quad[4], quad[6]];
+  const ys = [quad[1], quad[3], quad[5], quad[7]];
+  const left = Math.min(...xs);
+  const top = Math.min(...ys);
+  const right = Math.max(...xs);
+  const bottom = Math.max(...ys);
+  return {
+    left,
+    top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top)
+  };
+}
+
+function axPropertyMap(properties) {
+  const out = {};
+  for (const prop of Array.isArray(properties) ? properties : []) {
+    if (typeof prop?.name !== 'string') continue;
+    const value = axString(prop?.value);
+    if (value !== null && !(prop.name in out)) {
+      out[prop.name] = value;
+    }
+  }
+  return out;
+}
+
+function isInterestingAxNode(node) {
+  if (!node || node.ignored) return false;
+  const role = (axString(node.role) || '').toLowerCase();
+  const name = axString(node.name) || '';
+  const value = axString(node.value) || '';
+  return kAxSnapshotInterestingRoles.has(role) || name.length > 0 || value.length > 0;
+}
+
 function buildJsExecExpression(script, maxResultChars) {
   const encodedScript = JSON.stringify(script);
   return `(() => {
@@ -1025,6 +1086,63 @@ async function sendDomSnapshot(command) {
   await sendViaHalfPipe(snapshotPayload);
 }
 
+async function sendAccessibilitySnapshot(command) {
+  debugLog('sendAccessibilitySnapshot start', command);
+  const requestId = command.request_id || makeRequestId();
+  const tab = await resolveTargetTab(command.tab_id || null);
+  if (!tab?.id) throw new Error('active_tab_not_found');
+  lastAutomationTabId = tab.id;
+
+  const data = await withCdpSession(tab.id, async ({ sendCommand }) => {
+    await sendCommand('DOM.enable');
+    try {
+      await sendCommand('Accessibility.enable');
+    } catch {
+      // Older targets may not require/implement explicit enable.
+    }
+    const axTree = await sendCommand('Accessibility.getFullAXTree');
+    const nodes = Array.isArray(axTree?.nodes) ? axTree.nodes : [];
+    const filtered = nodes.filter(isInterestingAxNode).slice(0, 200);
+    const out = [];
+    for (const node of filtered) {
+      let rect = null;
+      const backendNodeId = Number.isInteger(node?.backendDOMNodeId) ? node.backendDOMNodeId : null;
+      if (backendNodeId !== null) {
+        try {
+          const boxModel = await sendCommand('DOM.getBoxModel', { backendNodeId });
+          rect = rectFromBoxModel(boxModel?.model ?? boxModel);
+        } catch {
+          rect = null;
+        }
+      }
+      out.push({
+        node_id: String(node?.nodeId ?? ''),
+        backend_node_id: backendNodeId,
+        role: axString(node?.role),
+        name: axString(node?.name),
+        value: axString(node?.value),
+        description: axString(node?.description),
+        ignored: Boolean(node?.ignored),
+        properties: axPropertyMap(node?.properties),
+        rect
+      });
+    }
+    return out;
+  });
+
+  await sendViaHalfPipe({
+    type: 'ax.snapshot',
+    request_id: requestId,
+    tabId: tab.id,
+    ts: Date.now(),
+    summary: {
+      type: 'ax.summary',
+      node_count: data.length,
+      nodes: data
+    }
+  });
+}
+
 async function sendScreenshot(command) {
   debugLog('sendScreenshot start', command);
   const source = command.source === 'desktop' ? 'desktop' : 'tab';
@@ -1308,6 +1426,19 @@ const kBleCommandHandlers = {
         type: 'dom.snapshot.error',
         request_id: cmd.request_id || null,
         error: detail,
+        ts: Date.now()
+      });
+    }
+  ),
+  'ax.snapshot.request': (command) => runBridgeHandler(
+    command,
+    'sendAccessibilitySnapshot',
+    sendAccessibilitySnapshot,
+    async (cmd, detail) => {
+      await sendViaHalfPipe({
+        type: 'ax.snapshot.error',
+        request_id: cmd.request_id || null,
+        error: clipText(detail || 'ax_snapshot_failed'),
         ts: Date.now()
       });
     }

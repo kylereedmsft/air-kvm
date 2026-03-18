@@ -18,6 +18,14 @@ void test_parse_mouse_move_abs() {
   TEST_ASSERT_EQUAL(5678, cmd->y);
 }
 
+void test_parse_mouse_scroll() {
+  const auto cmd = airkvm::ParseCommandLine("{\"type\":\"mouse.scroll\",\"dy\":-120}");
+  TEST_ASSERT_TRUE(cmd.has_value());
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(airkvm::CommandType::MouseScroll), static_cast<int>(cmd->type));
+  TEST_ASSERT_EQUAL(-120, cmd->dy);
+  TEST_ASSERT_EQUAL(-120, cmd->wheel);
+}
+
 void test_parse_key_tap() {
   const auto cmd = airkvm::ParseCommandLine("{\"type\":\"key.tap\",\"key\":\"Enter\"}");
   TEST_ASSERT_TRUE(cmd.has_value());
@@ -73,6 +81,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_parse_mouse_move_rel);
   RUN_TEST(test_parse_mouse_move_abs);
+  RUN_TEST(test_parse_mouse_scroll);
   RUN_TEST(test_parse_key_tap);
   RUN_TEST(test_parse_key_type);
   RUN_TEST(test_parse_key_type_escaped_text);

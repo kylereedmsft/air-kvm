@@ -21,6 +21,7 @@ class HidController {
 
   bool SendMouseMoveRel(int dx, int dy);
   bool SendMouseMoveAbs(int x, int y);
+  bool SendMouseScroll(int dy);
   bool SendMouseClick(const String& button);
   bool SendKeyTap(const String& key);
   bool SendKeyType(const String& text);
@@ -35,6 +36,7 @@ class HidController {
   bool NotifyMouse(uint8_t buttons, int dx, int dy, int wheel);
   bool NotifyMouseAbs(uint8_t buttons, int x, int y);
   bool SendMouseMoveRelChunked(int dx, int dy, bool* step_cap_exceeded = nullptr);
+  bool SendMouseScrollChunked(int dy, bool* step_cap_exceeded = nullptr);
   void EmitInjectTelemetry(const char* cmd_type, bool result, const char* reject_reason = nullptr);
 
   NimBLEHIDDevice* hid_device_{nullptr};

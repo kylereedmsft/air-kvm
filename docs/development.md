@@ -71,6 +71,7 @@ Run MCP tool harness (single tool call):
 
 ```bash
 node scripts/mcp-tool-call.mjs airkvm_dom_snapshot '{"request_id":"manual-1"}'
+node scripts/mcp-tool-call.mjs airkvm_accessibility_snapshot '{"request_id":"ax-1"}'
 node scripts/mcp-tool-call.mjs airkvm_screenshot_tab '{"request_id":"shot-1","max_width":1280,"max_height":720,"quality":0.6}'
 ```
 

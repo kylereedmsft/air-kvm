@@ -5,6 +5,7 @@ import { getTool, validateArgs } from '../src/protocol.js';
 
 test('screenshot and browser tools build correct commands', () => {
   const mouseAbs = getTool('airkvm_mouse_move_abs').build({ x: 1024, y: 2048 });
+  const mouseScroll = getTool('airkvm_mouse_scroll').build({ dy: -120 });
   const tab = getTool('airkvm_screenshot_tab').build({
     request_id: 'r1',
     max_width: 800,
@@ -40,8 +41,10 @@ test('screenshot and browser tools build correct commands', () => {
     timeout_ms: 600,
     max_result_chars: 300
   });
+  const ax = getTool('airkvm_accessibility_snapshot').build({ request_id: 'ax-1', tab_id: 11, timeout_ms: 30000 });
 
   assert.deepEqual(mouseAbs, { type: 'mouse.move_abs', x: 1024, y: 2048 });
+  assert.deepEqual(mouseScroll, { type: 'mouse.scroll', dy: -120 });
   assert.deepEqual(tab, {
     type: 'screenshot.request', source: 'tab', request_id: 'r1',
     max_width: 800, max_height: 450, quality: 0.5, max_chars: 70000, tab_id: 123, encoding: 'bin'
@@ -70,11 +73,15 @@ test('screenshot and browser tools build correct commands', () => {
     type: 'js.inject.request', request_id: 'inj-1', script: 'return document.title;',
     tab_id: 8, timeout_ms: 600, max_result_chars: 300
   });
+  assert.deepEqual(ax, { type: 'ax.snapshot.request', request_id: 'ax-1', tab_id: 11 });
 });
 
 test('validateArgs returns ok for valid args', () => {
   assert.deepEqual(validateArgs(getTool('airkvm_open_tab'), { request_id: 'r1', url: 'https://example.com' }), { ok: true });
   assert.deepEqual(validateArgs(getTool('airkvm_open_window'), { request_id: 'r1', url: 'https://example.com' }), { ok: true });
+  assert.deepEqual(validateArgs(getTool('airkvm_mouse_scroll'), { dy: -120 }), { ok: true });
+  assert.deepEqual(validateArgs(getTool('airkvm_accessibility_snapshot'), { request_id: 'r1', tab_id: 7 }), { ok: true });
+  assert.deepEqual(validateArgs(getTool('airkvm_accessibility_snapshot'), { request_id: 'r1', tab_id: 7, timeout_ms: 30000 }), { ok: true });
   assert.deepEqual(validateArgs(getTool('airkvm_exec_js_tab'), { request_id: 'r1', script: 'return 1;' }), { ok: true });
   assert.deepEqual(validateArgs(getTool('airkvm_inject_js_tab'), { request_id: 'r1', script: 'return 1;' }), { ok: true });
   assert.deepEqual(validateArgs(getTool('airkvm_list_tabs'), {}), { ok: true });
@@ -101,6 +108,8 @@ test('validateArgs rejects out-of-range values', () => {
   assert.deepEqual(validateArgs(getTool('airkvm_exec_js_tab'), { request_id: 'r', script: 's', timeout_ms: 9999 }), { ok: false, error: 'out_of_range:timeout_ms' });
   assert.deepEqual(validateArgs(getTool('airkvm_inject_js_tab'), { request_id: 'r', script: 's', timeout_ms: 10 }), { ok: false, error: 'out_of_range:timeout_ms' });
   assert.deepEqual(validateArgs(getTool('airkvm_inject_js_tab'), { request_id: 'r', script: 's', timeout_ms: 9999 }), { ok: false, error: 'out_of_range:timeout_ms' });
+  assert.deepEqual(validateArgs(getTool('airkvm_accessibility_snapshot'), { request_id: 'r', timeout_ms: 10 }), { ok: false, error: 'out_of_range:timeout_ms' });
+  assert.deepEqual(validateArgs(getTool('airkvm_accessibility_snapshot'), { request_id: 'r', timeout_ms: 120001 }), { ok: false, error: 'out_of_range:timeout_ms' });
 });
 
 test('validateArgs rejects strings violating length constraints', () => {

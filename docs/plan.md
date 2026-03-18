@@ -21,7 +21,7 @@ Maintain a reliable remote-control and browser-automation stack where:
 - All legacy `transfer.*` command types removed from protocol/parser/router.
 
 ### MCP
-- Structured tools: `airkvm_send`, `airkvm_list_tabs`, `airkvm_open_tab`, `airkvm_dom_snapshot`, `airkvm_exec_js_tab`, `airkvm_inject_js_tab`, `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
+- Structured tools: `airkvm_send`, `airkvm_list_tabs`, `airkvm_open_tab`, `airkvm_dom_snapshot`, `airkvm_accessibility_snapshot`, `airkvm_exec_js_tab`, `airkvm_inject_js_tab`, `airkvm_screenshot_tab`, `airkvm_screenshot_desktop`.
 - UART parser supports mixed framed stream (`ctrl`, `log`, `bin`, and `bin_error`).
 - `sendRequest()`: sends commands and receives responses via HalfPipe transport (AK frame binary chunking).
 - `sendControlCommand()`: sends HID/firmware-local commands as CONTROL frames (type `0x02`) directly to UART — not via HalfPipe.
@@ -36,6 +36,7 @@ Maintain a reliable remote-control and browser-automation stack where:
 - `bleWrite()` helper consolidates postEvent/postBinary telemetry boilerplate.
 - All legacy inbound transfer code removed (inboundScriptTransfers, old transfer handlers).
 - `airkvm_exec_js_tab` remains the CDP-backed path for arbitrary evaluation and diagnostics.
+- `airkvm_accessibility_snapshot` is the CDP-backed structured read path for generic role/name/rect inspection without page-specific injection helpers.
 - `airkvm_inject_js_tab` is the silent `chrome.scripting.executeScript` path for UI-test setup/readback where debugger UI must not appear.
 
 ### HID E2E
@@ -43,8 +44,17 @@ Maintain a reliable remote-control and browser-automation stack where:
 - The working path uses:
   - `airkvm_window_bounds` logical screen metrics
   - absolute HID (`mouse.move_abs`) via the digitizer-style report
+  - HID wheel scrolling via `mouse.scroll`
   - `airkvm_inject_js_tab` for fixture inject, layout readback, and validation
 - The old popup calibration tooling has been removed.
+
+### Current Blocker
+- `scripts/e2e-amazon-final-exam.mjs` is scaffolded but not passing yet.
+- The generic `airkvm_accessibility_snapshot` tool works in unit tests, but on a live Amazon page the streamed response currently stalls late in transfer and times out.
+- Bridge logs from the failed run show the extension repeatedly retrying an outbound HalfPipe chunk (`seq=188`) until the health watchdog disconnects the BLE link.
+- Next debugging step should stay generic:
+  - reduce `ax.snapshot` payload size / box-model work, and/or
+  - instrument both sides to prove whether ACK generation or ACK handling stops first during large extension→MCP transfers.
 
 ---
 

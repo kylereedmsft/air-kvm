@@ -207,6 +207,34 @@ function makeHarness() {
           });
           return;
         }
+        if (method === 'Accessibility.enable') {
+          cb({});
+          return;
+        }
+        if (method === 'Accessibility.getFullAXTree') {
+          cb({
+            nodes: [
+              {
+                nodeId: 'ax-1',
+                backendDOMNodeId: 101,
+                ignored: false,
+                role: { value: 'searchbox' },
+                name: { value: 'Search Amazon' },
+                value: { value: '' },
+                properties: [{ name: 'placeholder', value: { value: 'Search' } }]
+              }
+            ]
+          });
+          return;
+        }
+        if (method === 'DOM.getBoxModel') {
+          cb({
+            model: {
+              border: [10, 20, 110, 20, 110, 60, 10, 60]
+            }
+          });
+          return;
+        }
         if (method === 'Page.createIsolatedWorld') {
           cb({ executionContextId: 7 });
           return;
@@ -875,6 +903,25 @@ test('service worker dispatches dom snapshot requests and ignores unknown comman
     type: 'does.not.exist'
   });
   assert.equal(harness.postedPayloads.length, payloadCountBeforeUnknown);
+});
+
+test('service worker dispatches accessibility snapshot requests', async () => {
+  const harness = makeHarness();
+  await importServiceWorkerFresh();
+
+  const listener = findBleCommandListener(harness.runtimeListeners, harness);
+  await callBleCommand(listener, {
+    type: 'ax.snapshot.request',
+    request_id: 'ax-1'
+  });
+
+  const payload = harness.postedPayloads.find((entry) => entry?.request_id === 'ax-1');
+  assert.equal(payload?.type, 'ax.snapshot');
+  assert.equal(payload?.summary?.type, 'ax.summary');
+  assert.equal(Array.isArray(payload?.summary?.nodes), true);
+  assert.equal(payload?.summary?.nodes[0]?.role, 'searchbox');
+  assert.equal(payload?.summary?.nodes[0]?.name, 'Search Amazon');
+  assert.deepEqual(payload?.summary?.nodes[0]?.rect, { left: 10, top: 20, width: 100, height: 40 });
 });
 
 test('service worker sends screenshot via stream and verifies capture', async () => {

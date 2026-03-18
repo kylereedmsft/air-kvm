@@ -508,6 +508,16 @@ bool HidController::SendMouseMoveAbs(int x, int y) {
   return ok;
 }
 
+bool HidController::SendMouseScroll(int dy) {
+  bool step_cap_exceeded = false;
+  const bool ok = SendMouseScrollChunked(dy, &step_cap_exceeded);
+  EmitInjectTelemetry(
+      "mouse.scroll",
+      ok,
+      ok ? nullptr : (step_cap_exceeded ? "step_cap_exceeded" : "notify_failed"));
+  return ok;
+}
+
 bool HidController::SendMouseClick(const String& button) {
   const uint8_t mask = ButtonMask(button);
   if (mask == 0) {
@@ -716,6 +726,35 @@ bool HidController::SendMouseMoveRelChunked(int dx, int dy, bool* step_cap_excee
 
     remaining_x -= step_x;
     remaining_y -= step_y;
+  }
+  return true;
+}
+
+bool HidController::SendMouseScrollChunked(int dy, bool* step_cap_exceeded) {
+  if (step_cap_exceeded != nullptr) {
+    *step_cap_exceeded = false;
+  }
+  int remaining = dy;
+  int steps = 0;
+
+  while (remaining != 0) {
+    steps += 1;
+    if (steps > kMaxMouseMoveSteps) {
+      if (step_cap_exceeded != nullptr) {
+        *step_cap_exceeded = true;
+      }
+      return false;
+    }
+
+    int step = remaining;
+    if (step > 127) step = 127;
+    if (step < -127) step = -127;
+
+    if (!NotifyMouse(0, 0, 0, step)) {
+      return false;
+    }
+
+    remaining -= step;
   }
   return true;
 }

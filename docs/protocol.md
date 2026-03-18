@@ -285,6 +285,7 @@ determines the routing target and which HalfPipe method is used.
 | `airkvm_send` | raw command passthrough | `fw` | CONTROL |
 | `airkvm_mouse_move_rel` | `mouse.move_rel` | `hid` | CONTROL |
 | `airkvm_mouse_move_abs` | `mouse.move_abs` | `hid` | CONTROL |
+| `airkvm_mouse_scroll` | `mouse.scroll` | `hid` | CONTROL |
 | `airkvm_mouse_click` | `mouse.click` | `hid` | CONTROL |
 | `airkvm_key_tap` | `key.tap` | `hid` | CONTROL |
 | `airkvm_key_type` | `key.type` | `hid` | CONTROL |
@@ -296,6 +297,7 @@ determines the routing target and which HalfPipe method is used.
 | `airkvm_window_bounds` | `window.bounds.request` | `extension` | CHUNK |
 | `airkvm_open_tab` | `tab.open.request` | `extension` | CHUNK |
 | `airkvm_dom_snapshot` | `dom.snapshot.request` | `extension` | CHUNK |
+| `airkvm_accessibility_snapshot` | `ax.snapshot.request` | `extension` | CHUNK |
 | `airkvm_exec_js_tab` | `js.exec.request` | `extension` | CHUNK |
 | `airkvm_inject_js_tab` | `js.inject.request` | `extension` | CHUNK |
 | `airkvm_screenshot_tab` | `screenshot.request` | `extension` | CHUNK |
@@ -303,6 +305,8 @@ determines the routing target and which HalfPipe method is used.
 
 Notes:
 - `mouse.move_abs` / `airkvm_mouse_move_abs` use HID logical coordinates in the 15-bit unsigned range `0..32767`. They are not screen pixels.
+- `mouse.scroll` / `airkvm_mouse_scroll` currently expose vertical wheel scrolling only. Negative `dy` scrolls down; positive `dy` scrolls up.
+- `airkvm_accessibility_snapshot` is the CDP-backed structured accessibility read path and returns filtered nodes with roles, names, and rects.
 - `airkvm_exec_js_tab` is the CDP-backed path and may trigger debugger UI.
 - `airkvm_inject_js_tab` is the silent extension scripting path for deterministic DOM setup/readback.
 

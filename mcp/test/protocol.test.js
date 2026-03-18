@@ -17,6 +17,10 @@ test('airkvm_mouse_move_abs build', () => {
   assert.deepEqual(getTool('airkvm_mouse_move_abs').build({ x: 123, y: 456 }), { type: 'mouse.move_abs', x: 123, y: 456 });
 });
 
+test('airkvm_mouse_scroll build', () => {
+  assert.deepEqual(getTool('airkvm_mouse_scroll').build({ dy: -120 }), { type: 'mouse.scroll', dy: -120 });
+});
+
 test('validateArgs rejects airkvm_mouse_move_rel with missing fields', () => {
   const tool = getTool('airkvm_mouse_move_rel');
   assert.deepEqual(validateArgs(tool, { dx: 1 }), { ok: false, error: 'missing_required_field:dy' });
@@ -32,6 +36,12 @@ test('validateArgs rejects airkvm_mouse_move_abs with missing or out-of-range fi
 
 test('validateArgs rejects airkvm_mouse_move_rel with non-integer', () => {
   assert.deepEqual(validateArgs(getTool('airkvm_mouse_move_rel'), { dx: 1.5, dy: 0 }), { ok: false, error: 'invalid_type:dx' });
+});
+
+test('validateArgs rejects airkvm_mouse_scroll with missing or non-integer dy', () => {
+  const tool = getTool('airkvm_mouse_scroll');
+  assert.deepEqual(validateArgs(tool, {}), { ok: false, error: 'missing_required_field:dy' });
+  assert.deepEqual(validateArgs(tool, { dy: 1.5 }), { ok: false, error: 'invalid_type:dy' });
 });
 
 test('airkvm_mouse_click build', () => {
@@ -82,17 +92,25 @@ test('airkvm_transfer_reset build', () => {
   assert.deepEqual(getTool('airkvm_transfer_reset').build({}), { type: 'transfer.reset' });
 });
 
+test('airkvm_accessibility_snapshot build', () => {
+  assert.deepEqual(getTool('airkvm_accessibility_snapshot').build({ request_id: 'ax-1', tab_id: 3 }), {
+    type: 'ax.snapshot.request',
+    request_id: 'ax-1',
+    tab_id: 3
+  });
+});
+
 test('target is set correctly on all tools', () => {
   for (const name of ['airkvm_send', 'airkvm_state_request', 'airkvm_state_set',
     'airkvm_fw_version_request', 'airkvm_transfer_reset']) {
     assert.equal(getTool(name).target, 'fw', `expected ${name} to have target: 'fw'`);
   }
-  for (const name of ['airkvm_mouse_move_rel', 'airkvm_mouse_move_abs',
+  for (const name of ['airkvm_mouse_move_rel', 'airkvm_mouse_move_abs', 'airkvm_mouse_scroll',
     'airkvm_mouse_click', 'airkvm_key_tap', 'airkvm_key_type']) {
     assert.equal(getTool(name).target, 'hid', `expected ${name} to have target: 'hid'`);
   }
   for (const name of ['airkvm_list_tabs', 'airkvm_screenshot_tab', 'airkvm_screenshot_desktop',
-    'airkvm_dom_snapshot', 'airkvm_exec_js_tab', 'airkvm_window_bounds', 'airkvm_open_tab']) {
+    'airkvm_dom_snapshot', 'airkvm_accessibility_snapshot', 'airkvm_exec_js_tab', 'airkvm_window_bounds', 'airkvm_open_tab']) {
     assert.equal(getTool(name).target, 'extension', `expected ${name} to have target: 'extension'`);
   }
 });

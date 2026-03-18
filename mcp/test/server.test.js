@@ -25,6 +25,7 @@ test('tools/list includes structured tools', () => {
     'airkvm_send',
     'airkvm_mouse_move_rel',
     'airkvm_mouse_move_abs',
+    'airkvm_mouse_scroll',
     'airkvm_mouse_click',
     'airkvm_key_tap',
     'airkvm_key_type',
@@ -39,6 +40,7 @@ test('tools/list includes structured tools', () => {
     'airkvm_open_tab',
     'airkvm_open_window',
     'airkvm_dom_snapshot',
+    'airkvm_accessibility_snapshot',
     'airkvm_exec_js_tab',
     'airkvm_inject_js_tab',
     'airkvm_screenshot_tab',
@@ -288,6 +290,46 @@ test('airkvm_dom_snapshot uses transport.send', async () => {
   const payload = JSON.parse(sent[0].result.content[0].text);
   assert.equal(payload.request_id, 'dom-hp-1');
   assert.equal(payload.snapshot.html, '<h1>hello</h1>');
+});
+
+test('airkvm_accessibility_snapshot returns structured json', async () => {
+  let seenTimeoutMs = null;
+  const { sent, server } = makeHarness({
+    send: async (command, _tool, options) => {
+      seenTimeoutMs = options?.timeoutMs ?? null;
+      return {
+      ok: true,
+      data: {
+        type: 'ax.snapshot',
+        request_id: command.request_id,
+        tabId: 12,
+        summary: {
+          type: 'ax.summary',
+          node_count: 1,
+          nodes: [
+            {
+              role: 'searchbox',
+              name: 'Search Amazon',
+              rect: { left: 10, top: 20, width: 100, height: 40 }
+            }
+          ]
+        }
+      }
+      };
+    },
+  });
+  server.handleRequest({
+    jsonrpc: '2.0', id: 21,
+    method: 'tools/call',
+    params: { name: 'airkvm_accessibility_snapshot', arguments: { request_id: 'ax-1', timeout_ms: 30000 } }
+  });
+  await new Promise((r) => setTimeout(r, 50));
+  const payload = JSON.parse(sent[0].result.content[0].text);
+  assert.equal(seenTimeoutMs, 30000);
+  assert.equal(payload.request_id, 'ax-1');
+  assert.equal(payload.snapshot.type, 'ax.snapshot');
+  assert.equal(payload.snapshot.summary.type, 'ax.summary');
+  assert.equal(payload.snapshot.summary.nodes[0].role, 'searchbox');
 });
 
 test('airkvm_screenshot_tab uses transport.send', async () => {

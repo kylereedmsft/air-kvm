@@ -71,6 +71,19 @@ const TOOL_DEFINITIONS = [
     build: (args) => ({ type: 'mouse.move_abs', x: args.x, y: args.y })
   },
   {
+    name: 'airkvm_mouse_scroll',
+    target: 'hid',
+    description: 'Scroll the mouse wheel vertically on the target machine. Negative dy scrolls down; positive dy scrolls up.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        dy: { type: 'integer' }
+      },
+      required: ['dy']
+    },
+    build: (args) => ({ type: 'mouse.scroll', dy: args.dy })
+  },
+  {
     name: 'airkvm_mouse_click',
     target: 'hid',
     description: 'Click a mouse button on the target machine.',
@@ -259,6 +272,27 @@ const TOOL_DEFINITIONS = [
       required: []
     },
     build: (args) => ({ type: 'dom.snapshot.request', request_id: reqId(args) }),
+    formatData: (cmd, data) => ({ request_id: cmd.request_id, snapshot: data })
+  },
+  {
+    name: 'airkvm_accessibility_snapshot',
+    target: 'extension',
+    timeoutMs: (args) => Number.isInteger(args?.timeout_ms) ? args.timeout_ms : 30000,
+    description: 'Request a filtered accessibility snapshot with roles, names, and rects from the target tab via CDP.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        request_id: { type: 'string' },
+        tab_id: { type: 'integer' },
+        timeout_ms: { type: 'integer', minimum: 1000, maximum: 120000 }
+      },
+      required: []
+    },
+    build: (args) => {
+      const command = { type: 'ax.snapshot.request', request_id: reqId(args) };
+      if (Number.isInteger(args?.tab_id)) command.tab_id = args.tab_id;
+      return command;
+    },
     formatData: (cmd, data) => ({ request_id: cmd.request_id, snapshot: data })
   },
   {

@@ -71,6 +71,11 @@ bool CommandRouter::HandleHidCommand(const airkvm::Command& cmd) {
       if (!ok) transport_.EmitLog("hid.reject mouse.move_abs");
       return ok;
     }
+    case airkvm::CommandType::MouseScroll: {
+      const bool ok = hid_.SendMouseScroll(cmd.dy);
+      if (!ok) transport_.EmitLog("hid.reject mouse.scroll");
+      return ok;
+    }
     case airkvm::CommandType::MouseClick: {
       const bool ok = hid_.SendMouseClick(cmd.button.c_str());
       if (!ok) transport_.EmitLog("hid.reject mouse.click");

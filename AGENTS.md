@@ -41,6 +41,7 @@ Run components individually:
 - `AIRKVM_SERIAL_PORT=/dev/cu.usbserial-0001 node scripts/mcp-fw-integration.mjs`: End-to-end local MCP↔firmware integration test.
 - `AIRKVM_SAVE_SCREENSHOTS=1 node scripts/mcp-tool-call.mjs airkvm_screenshot_tab '{"request_id":"shot-1","max_width":1280,"max_height":720,"quality":0.6}'`: Run MCP screenshot harness and save image to `temp/`.
 - `node scripts/mcp-tool-call.mjs airkvm_dom_snapshot '{"request_id":"dom-1"}'`: Run MCP DOM snapshot harness call.
+- `node scripts/mcp-tool-call.mjs airkvm_accessibility_snapshot '{"request_id":"ax-1"}'`: Run MCP accessibility snapshot harness call.
 
 If `pio` is unavailable, use `./scripts/firmware-host-test.sh` for host-side firmware sanity testing.
 

@@ -12,6 +12,7 @@ enum class CommandType {
   Unknown,
   MouseMoveRel,
   MouseMoveAbs,
+  MouseScroll,
   MouseClick,
   KeyTap,
   KeyType,
@@ -24,6 +25,7 @@ struct Command {
   CommandType type{CommandType::Unknown};
   int dx{0};
   int dy{0};
+  int wheel{0};
   int x{0};
   int y{0};
   bool busy{false};

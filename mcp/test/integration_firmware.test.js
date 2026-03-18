@@ -96,6 +96,12 @@ itest('mouse_move_abs returns ok', async () => {
   assert.equal(result.ok, true);
 });
 
+itest('mouse_scroll returns ok', async () => {
+  const t = getTool('airkvm_mouse_scroll');
+  const result = await transport.send(t.build({ dy: -1 }), t);
+  assert.equal(result.ok, true);
+});
+
 itest('mouse_click returns ok', async () => {
   const t = getTool('airkvm_mouse_click');
   const result = await transport.send(t.build({ button: 'left' }), t);
@@ -190,5 +196,4 @@ itest('RESET frame clears parser state; firmware responds normally after', async
 // firmware silently forwards the frame to BLE with no UART response, and
 // HalfPipe discards NACKs that arrive without a pending chunk. Verifying
 // this path requires a BLE receiver (extension) to be connected.
-
 
