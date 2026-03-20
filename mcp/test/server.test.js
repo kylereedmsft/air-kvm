@@ -463,7 +463,7 @@ test('airkvm_save_image bad base64 surfaces save_failed error', () => {
   server.handleRequest({
     jsonrpc: '2.0', id: 12,
     method: 'tools/call',
-    params: { name: 'airkvm_save_image', arguments: { base64: 'ok', mime: 'image/jpeg', path: '/no/such/dir/that/cannot/be/created/x/y/z/img.jpg' } }
+    params: { name: 'airkvm_save_image', arguments: { base64: 'ok', mime: 'image/jpeg', path: '\0invalid' } }
   });
   assert.equal(sent.length, 1);
   assert.equal(sent[0].isError, true);
